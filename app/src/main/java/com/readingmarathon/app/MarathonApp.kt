@@ -16,9 +16,8 @@ class MarathonApp : Application() {
         private set
 
     /** Accounts and data. Tests replace it through [backendOverride] before the first screen opens. */
-    val backend: Backend by lazy {
-        backendOverride ?: FirebaseBackend(this, BuildConfig.FIREBASE_CONFIGURED)
-    }
+    private val firebase: Backend by lazy { FirebaseBackend(this, BuildConfig.FIREBASE_CONFIGURED) }
+    val backend: Backend get() = backendOverride ?: firebase
 
     override fun onCreate() {
         super.onCreate()

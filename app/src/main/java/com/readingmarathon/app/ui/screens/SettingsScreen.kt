@@ -35,7 +35,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.readingmarathon.app.BuildConfig
-import com.readingmarathon.app.data.Mode
 import com.readingmarathon.app.data.ThemeMode
 import com.readingmarathon.app.notify.Reminder
 import com.readingmarathon.app.ui.components.PaperCard
@@ -48,7 +47,8 @@ fun SettingsScreen(ctx: Ctx) {
     val settings by ctx.vm.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var pickTime by remember { mutableStateOf(false) }
-    var confirmLeave by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    val activity = context as? android.app.Activity
     val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) ctx.vm.setReminder(true, settings.reminderHour, settings.reminderMinute)
         else ctx.vm.say("بدون إذن الإشعارات لن يظهر التذكير.")
@@ -81,24 +81,50 @@ fun SettingsScreen(ctx: Ctx) {
             TextButton(onClick = { pickTime = true }) { Text("تغيير الوقت") }
         }
 
+        SectionTitle("الحساب")
+        PaperCard {
+            val account by ctx.vm.account.collectAsStateWithLifecycle()
+            val acc = account
+            Text(
+                when {
+                    acc == null -> "—"
+                    acc.isGuest -> "ضيف"
+                    else -> acc.email ?: acc.label
+                },
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (acc?.isGuest == true) {
+                Text(
+                    "اربط حساب Google لتصل إلى ماراثوناتك من أي هاتف. لن تخسر شيئاً.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { activity?.let(ctx.vm::signInWithGoogle) }, modifier = Modifier.fillMaxWidth()) { Text("ربط حساب Google") }
+            }
+            if (acc?.isAdmin == true) {
+                TextButton(onClick = { ctx.vm.switchMarathon(); ctx.vm.openAdminPanel() }) { Text("لوحة إدارة المنصة", color = Brand.colors.gold) }
+            }
+            TextButton(onClick = { confirmSignOut = true }) { Text("تسجيل الخروج", color = MaterialTheme.colorScheme.error) }
+        }
+
         SectionTitle("الماراثون")
         PaperCard {
             Text(ctx.data.marathon.name, style = MaterialTheme.typography.titleMedium)
             Text(
-                when (ctx.session.mode) {
-                    Mode.LOCAL -> "على هذا الجهاز · أنت المشرف"
-                    Mode.SHARED -> if (ctx.isOrganizer) "مشترك · أنت المشرف" else "مشترك · قارئ"
-                    Mode.DEMO -> "بيانات تجريبية"
+                when {
+                    ctx.session.asAdmin -> "تتصفحه كمدير للمنصة"
+                    ctx.session.role == com.readingmarathon.app.data.Role.ORGANIZER -> "أنت المشرف"
+                    else -> "قارئ"
                 },
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             ctx.me?.let { Text("تقرأ باسم: ${it.name}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp)) }
-            if (ctx.isOrganizer && ctx.me != null) {
+            if (ctx.isOrganizer && ctx.me != null && !ctx.session.asAdmin) {
                 TextButton(onClick = { ctx.vm.setMyMember(null) }) { Text("لا أقرأ مع المجموعة") }
             }
             Spacer(Modifier.height(10.dp))
-            OutlinedButton(onClick = { confirmLeave = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (ctx.session.mode == Mode.DEMO) "إنهاء التجربة" else "الخروج من الماراثون")
+            OutlinedButton(onClick = ctx.vm::switchMarathon, modifier = Modifier.fillMaxWidth()) {
+                Text(if (ctx.session.asAdmin) "العودة إلى لوحة الإدارة" else "ماراثون آخر")
             }
         }
 
@@ -131,21 +157,19 @@ fun SettingsScreen(ctx: Ctx) {
         )
     }
 
-    if (confirmLeave) {
+    if (confirmSignOut) {
         AlertDialog(
-            onDismissRequest = { confirmLeave = false },
-            title = { Text("الخروج من الماراثون؟") },
+            onDismissRequest = { confirmSignOut = false },
+            title = { Text("تسجيل الخروج؟") },
             text = {
+                val guest = ctx.vm.account.value?.isGuest == true
                 Text(
-                    when (ctx.session.mode) {
-                        Mode.LOCAL -> "لن يُحذف شيء: يبقى الماراثون محفوظاً على هذا الجهاز وتفتحه من شاشة البداية."
-                        Mode.SHARED -> "تبقى بياناتك في الماراثون المشترك. للعودة تحتاج رمز الدعوة."
-                        Mode.DEMO -> "ستعود إلى شاشة البداية."
-                    },
+                    if (guest) "أنت ضيف: بعد الخروج لن تستطيع العودة إلى هذا الحساب. اربط حساب Google أولاً إن أردت الاحتفاظ بماراثوناتك."
+                    else "بياناتك محفوظة في حسابك، وتعود إليها متى سجّلت الدخول.",
                 )
             },
-            confirmButton = { TextButton(onClick = { confirmLeave = false; ctx.vm.leave() }) { Text("خروج") } },
-            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("إلغاء") } },
+            confirmButton = { TextButton(onClick = { confirmSignOut = false; ctx.vm.signOut() }) { Text("خروج", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("إلغاء") } },
         )
     }
 }

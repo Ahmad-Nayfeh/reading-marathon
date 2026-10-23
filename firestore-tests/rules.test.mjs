@@ -1,5 +1,5 @@
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, collectionGroup, getDocs, writeBatch } from 'firebase/firestore';
 import { readFileSync } from 'fs';
 
 const env = await initializeTestEnvironment({ projectId: 'demo-marathon', firestore: { rules: readFileSync('../firestore.rules', 'utf8'), host: '127.0.0.1', port: 8085 } });
@@ -62,6 +62,27 @@ await t('new member links self', assertSucceeds(setDoc(doc(sam, M + '/members/m_
 await t('member cannot add archived/forged fields', assertFails(setDoc(doc(sam, M + '/members/m_x'), { name: 'x', active: true, linkedUid: 'ali' })));
 await t('org archives member', assertSucceeds(updateDoc(doc(org, M + '/members/m_sam'), { active: false })));
 await t('org renames marathon', assertSucceeds(updateDoc(doc(org, M), { name: 'جديد' })));
+
+// --- users and the platform admin
+const boss = env.authenticatedContext('boss', { email: 'readingmarathon.admin@gmail.com', email_verified: true }).firestore();
+const fake = env.authenticatedContext('fake', { email: 'readingmarathon.admin@gmail.com', email_verified: false }).firestore();
+const g = env.authenticatedContext('gus', { email: 'gus@gmail.com', email_verified: true }).firestore();
+await t('user writes own profile', assertSucceeds(setDoc(doc(g, 'users/gus'), { email: 'gus@gmail.com', name: 'Gus', guest: false, createdAt: 1, lastSeen: 1, marathons: [] })));
+await t('user cannot fake email in profile', assertFails(setDoc(doc(g, 'users/gus'), { email: 'x@y.z', name: 'Gus', guest: false, createdAt: 1, lastSeen: 1, marathons: [] })));
+await t('user cannot write another profile', assertFails(setDoc(doc(g, 'users/ali'), { email: 'gus@gmail.com', guest: false, marathons: [] })));
+await t('user cannot read another profile', assertFails(getDoc(doc(ali, 'users/gus'))));
+await t('user cannot list profiles', assertFails(getDocs(collection(g, 'users'))));
+const guest = env.authenticatedContext('anon').firestore();
+await t('guest writes profile without email', assertSucceeds(setDoc(doc(guest, 'users/anon'), { email: null, name: null, guest: true, marathons: ['mr1'], lastSeen: 2 }, { merge: true })));
+await t('admin lists profiles', assertSucceeds(getDocs(collection(boss, 'users'))));
+await t('admin lists marathons', assertSucceeds(getDocs(collection(boss, 'marathons'))));
+await t('non-admin cannot list marathons', assertFails(getDocs(collection(g, 'marathons'))));
+await t('unverified admin email is not admin', assertFails(getDocs(collection(fake, 'users'))));
+await t('admin collection-group entries', assertSucceeds(getDocs(collectionGroup(boss, 'entries'))));
+await t('non-admin collection-group entries', assertFails(getDocs(collectionGroup(ali, 'entries'))));
+await t('admin reads any marathon', assertSucceeds(getDoc(doc(boss, M))));
+await t('admin edits any marathon', assertSucceeds(setDoc(doc(boss, M + '/challenges/c9'), { title: 'x', start: '2026-12-01', end: '2026-12-10' })));
+await t('admin logs for any member', assertSucceeds(setDoc(doc(boss, M + '/entries/m_ali_2026-10-18'), e('m_ali', '2026-10-18'))));
 
 console.log(`\n${n - bad}/${n} passed`);
 await env.cleanup();

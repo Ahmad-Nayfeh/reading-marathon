@@ -7,3 +7,9 @@
 }
 -keep,includedescriptorclasses class com.readingmarathon.core.**$$serializer { *; }
 # Firestore maps documents through reflection-free Map APIs here, nothing extra to keep.
+
+# Credential Manager loads its Play Services provider by reflection.
+-if class androidx.credentials.CredentialManager
+-keep class androidx.credentials.playservices.** {
+  *;
+}

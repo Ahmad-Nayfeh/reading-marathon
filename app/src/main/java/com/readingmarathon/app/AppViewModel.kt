@@ -76,6 +76,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _admin = MutableStateFlow<AdminOverview?>(null)
     val admin: StateFlow<AdminOverview?> = _admin
 
+    /** The platform admin panel is showing (admin account only). */
+    private val _adminPanel = MutableStateFlow(false)
+    val adminPanel: StateFlow<Boolean> = _adminPanel
+
     fun today(): LocalDate = LocalDate.now()
 
     init {
@@ -94,6 +98,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (acc == null) closeSession(forget = false)
                 _mine.value = null
                 _admin.value = null
+                _adminPanel.value = false
             }
         }
     }
@@ -194,8 +199,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!code.isNullOrBlank()) _pendingCode.value = Ids.normalizeCode(code)
     }
 
-    /** Back to the marathon list (nothing is deleted). */
-    fun switchMarathon() = run({ closeSession(forget = true); loadMine() })
+    /** Back to the marathon list, or to the admin panel if the marathon was opened from it. */
+    fun switchMarathon() = run({
+        val fromAdmin = _session.value?.asAdmin == true
+        closeSession(forget = true)
+        if (fromAdmin) _adminPanel.value = true else loadMine()
+    })
 
     /** A member who just joined says who they are in the marathon. */
     fun pickMember(memberId: String) = run({
@@ -224,8 +233,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadAdmin() = run({ _admin.value = backend.adminOverview() }, quiet = true)
 
+    fun openAdminPanel() {
+        if (backend.account.value?.isAdmin != true) return
+        _adminPanel.value = true
+        loadAdmin()
+    }
+
+    fun closeAdminPanel() { _adminPanel.value = false }
+
     /** Opens any marathon from the admin panel, with organiser rights. */
     fun adminOpen(marathonId: String) = run({
+        _adminPanel.value = false
         open(Session(marathonId, backend.roleIn(marathonId) ?: Role.ORGANIZER, myMemberIdIn(marathonId), asAdmin = true), persist = false)
     })
 

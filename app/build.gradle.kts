@@ -117,6 +117,9 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.auth)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play)
+    implementation(libs.googleid)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)

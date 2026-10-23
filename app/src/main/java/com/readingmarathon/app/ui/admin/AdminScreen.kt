@@ -39,7 +39,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.readingmarathon.app.data.Mode
 import com.readingmarathon.app.report.Reports
 import com.readingmarathon.app.ui.components.Avatar
 import com.readingmarathon.app.ui.components.challengesCount
@@ -77,14 +76,10 @@ fun AdminScreen(ctx: Ctx) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                when (ctx.session.mode) {
-                    Mode.LOCAL -> "محفوظ على هذا الجهاز. صدّر نسخة احتياطية من حين لآخر."
-                    Mode.SHARED -> "ماراثون مشترك: كل قارئ يسجّل من هاتفه."
-                    Mode.DEMO -> "بيانات تجريبية: التعديلات لا تُحفظ."
-                },
+                "كل قارئ يسجّل من هاتفه، والنتائج تظهر للجميع لحظة بلحظة.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (ctx.session.mode == Mode.SHARED && d.marathon.inviteCode.isNotBlank()) {
+            if (d.marathon.inviteCode.isNotBlank()) {
                 Spacer(Modifier.height(12.dp))
                 Text("رمز الدعوة", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(d.marathon.inviteCode, fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = 6.sp, color = Brand.colors.gold)

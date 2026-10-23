@@ -25,10 +25,12 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.readingmarathon.app.AppViewModel
-import com.readingmarathon.app.data.Role
+import com.readingmarathon.app.ui.admin.PlatformAdminScreen
+import com.readingmarathon.app.ui.screens.LoadingScreen
 import com.readingmarathon.app.ui.screens.MainScreen
-import com.readingmarathon.app.ui.screens.Onboarding
+import com.readingmarathon.app.ui.screens.MarathonsScreen
 import com.readingmarathon.app.ui.screens.PickMemberScreen
+import com.readingmarathon.app.ui.screens.SignInScreen
 import com.readingmarathon.app.ui.screens.Splash
 import com.readingmarathon.app.ui.theme.MarathonTheme
 
@@ -39,6 +41,8 @@ val LocalSnackbar = androidx.compose.runtime.staticCompositionLocalOf { Snackbar
 fun MarathonRoot(vm: AppViewModel) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val booted by vm.booted.collectAsStateWithLifecycle()
+    val account by vm.account.collectAsStateWithLifecycle()
+    val adminPanel by vm.adminPanel.collectAsStateWithLifecycle()
     val session by vm.session.collectAsStateWithLifecycle()
     val data by vm.data.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -52,26 +56,33 @@ fun MarathonRoot(vm: AppViewModel) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl, LocalSnackbar provides snackbar) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 val stage = when {
-                    !booted -> 0
-                    session == null -> 1
-                    data == null -> 0
-                    session?.role == Role.MEMBER && session?.myMemberId == null -> 2
-                    else -> 3
+                    !booted -> Stage.SPLASH
+                    account == null -> Stage.SIGN_IN
+                    session == null && adminPanel -> Stage.ADMIN
+                    session == null -> Stage.MARATHONS
+                    data == null -> Stage.LOADING
+                    session?.isOrganizer == false && session?.myMemberId == null -> Stage.PICK_MEMBER
+                    else -> Stage.MAIN
                 }
                 AnimatedContent(stage, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "stage") { s ->
                     when (s) {
-                        0 -> Splash()
-                        1 -> Onboarding(vm)
-                        2 -> PickMemberScreen(vm)
-                        else -> MainScreen(vm)
+                        Stage.SPLASH -> Splash()
+                        Stage.SIGN_IN -> SignInScreen(vm)
+                        Stage.ADMIN -> PlatformAdminScreen(vm)
+                        Stage.MARATHONS -> MarathonsScreen(vm)
+                        Stage.LOADING -> LoadingScreen(vm)
+                        Stage.PICK_MEMBER -> PickMemberScreen(vm)
+                        Stage.MAIN -> MainScreen(vm)
                     }
                 }
                 SnackbarHost(
                     snackbar,
                     Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding()
-                        .padding(bottom = if (stage == 3) 84.dp else 12.dp),
+                        .padding(bottom = if (stage == Stage.MAIN) 84.dp else 12.dp),
                 )
             }
         }
     }
 }
+
+private enum class Stage { SPLASH, SIGN_IN, ADMIN, MARATHONS, LOADING, PICK_MEMBER, MAIN }

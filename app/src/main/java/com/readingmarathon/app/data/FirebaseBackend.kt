@@ -120,8 +120,17 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
     }
 
     private suspend fun rememberMarathon(id: String) {
-        requireDb().collection("users").document(uid())
-            .set(mapOf("marathons" to FieldValue.arrayUnion(id), "lastSeen" to System.currentTimeMillis()), SetOptions.merge())
+        val user = auth?.currentUser ?: throw RuleViolation("سجّل الدخول أولاً.")
+        val acc = user.toAccount()
+        // Profile fields ride along, so this works even if the sign-in write never happened.
+        requireDb().collection("users").document(user.uid)
+            .set(
+                mapOf(
+                    "email" to acc.email, "name" to acc.name, "guest" to acc.isGuest,
+                    "marathons" to FieldValue.arrayUnion(id), "lastSeen" to System.currentTimeMillis(),
+                ),
+                SetOptions.merge(),
+            )
             .await()
     }
 
