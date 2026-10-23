@@ -1,0 +1,92 @@
+rules_version = '2';
+
+// Shared marathons. Every reader signs in anonymously; access comes from the marathon's `roles` map
+// ({uid: "organizer" | "member"}). Members can only write their own reading; the organiser can write
+// everything. Deploy with: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function marathon(id) { return get(/databases/$(database)/documents/marathons/$(id)).data; }
+    function roleIn(id) { return marathon(id).roles.get(uid(), null); }
+    function isMember(id) { return signedIn() && roleIn(id) != null; }
+    function isOrganizer(id) { return signedIn() && roleIn(id) == 'organizer'; }
+    // A member document this account is linked to.
+    function ownsMember(id, memberId) {
+      return get(/databases/$(database)/documents/marathons/$(id)/members/$(memberId)).data.get('linkedUid', null) == uid();
+    }
+    function validDate(d) { return d is string && d.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+
+    // Invite codes map to a marathon. Readable one at a time (never listed), so codes can't be enumerated.
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && request.resource.data.createdBy == uid()
+                    && request.resource.data.keys().hasOnly(['marathonId', 'createdBy']);
+      allow update, delete: if false;
+    }
+
+    match /marathons/{id} {
+      allow get: if isMember(id);
+      allow list: if false;
+      allow create: if signedIn()
+                    && request.resource.data.roles.keys().hasOnly([uid()])
+                    && request.resource.data.roles[uid()] == 'organizer'
+                    && request.resource.data.name is string && request.resource.data.name.size() <= 120;
+      allow update: if isOrganizer(id)
+                    // Anyone holding the code may add themselves as a member — and change nothing else.
+                    || (signedIn()
+                        && !(uid() in resource.data.roles)
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['roles'])
+                        && request.resource.data.roles.diff(resource.data.roles).affectedKeys().hasOnly([uid()])
+                        && request.resource.data.roles[uid()] == 'member');
+      allow delete: if false;
+
+      match /members/{memberId} {
+        allow read: if isMember(id);
+        // A member may add themselves by name (unlinked, or linked to their own account).
+        allow create: if isOrganizer(id)
+                      || (isMember(id)
+                          && request.resource.data.keys().hasOnly(['name', 'active', 'linkedUid'])
+                          && request.resource.data.active == true
+                          && request.resource.data.linkedUid in [null, uid()]
+                          && request.resource.data.name is string && request.resource.data.name.size() <= 40);
+        // A member may claim an unclaimed name for their account, and nothing more.
+        allow update: if isOrganizer(id)
+                      || (isMember(id)
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['linkedUid'])
+                          && resource.data.get('linkedUid', null) == null
+                          && request.resource.data.linkedUid == uid());
+        allow delete: if false; // members are archived, never deleted
+      }
+
+      match /challenges/{challengeId} {
+        allow read: if isMember(id);
+        allow write: if isOrganizer(id);
+      }
+
+      match /entries/{entryId} {
+        allow read: if isMember(id);
+        allow create, update: if isMember(id)
+                              && entryId == request.resource.data.memberId + '_' + request.resource.data.date
+                              && validDate(request.resource.data.date)
+                              && request.resource.data.commonMinutes is int && request.resource.data.commonMinutes >= 0
+                              && request.resource.data.otherMinutes is int && request.resource.data.otherMinutes >= 0
+                              && request.resource.data.commonMinutes + request.resource.data.otherMinutes <= 960
+                              && (isOrganizer(id) || ownsMember(id, request.resource.data.memberId));
+        allow delete: if isOrganizer(id) || (isMember(id) && ownsMember(id, resource.data.memberId));
+      }
+
+      match /achievements/{achievementId} {
+        allow read: if isMember(id);
+        allow create: if isMember(id)
+                      && request.resource.data.type in ['FINISHED_COMMON_BOOK', 'ATTENDED_DISCUSSION', 'FINISHED_OTHER_BOOK']
+                      && validDate(request.resource.data.date)
+                      && (isOrganizer(id) || ownsMember(id, request.resource.data.memberId));
+        allow update: if isOrganizer(id);
+        allow delete: if isOrganizer(id) || (isMember(id) && ownsMember(id, resource.data.memberId));
+      }
+    }
+  }
+}

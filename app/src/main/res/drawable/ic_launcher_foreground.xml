@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An open book whose pages form a finishing ribbon, with a star above it. 108dp adaptive canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- star -->
+    <path
+        android:fillColor="#F2B84B"
+        android:pathData="M54,27 L56.6,33.2 L63.3,33.7 L58.2,38.1 L59.8,44.6 L54,41.1 L48.2,44.6 L49.8,38.1 L44.7,33.7 L51.4,33.2 Z" />
+    <!-- left page -->
+    <path
+        android:fillColor="#FBF7EF"
+        android:pathData="M53,50 C46,46 38,45 30,46.5 L30,75 C38,73.5 46,74.5 53,78.5 Z" />
+    <!-- right page -->
+    <path
+        android:fillColor="#E9DFC8"
+        android:pathData="M55,50 C62,46 70,45 78,46.5 L78,75 C70,73.5 62,74.5 55,78.5 Z" />
+    <!-- gold spine / finish line -->
+    <path
+        android:fillColor="#F2B84B"
+        android:pathData="M53,49 L55,49 L55,80 L53,80 Z" />
+    <!-- text lines -->
+    <path android:strokeColor="#14213D" android:strokeWidth="1.6" android:strokeLineCap="round"
+        android:pathData="M35,55 C40,54.2 44,54.6 48,56 M35,61 C40,60.2 44,60.6 48,62 M35,67 C40,66.2 44,66.6 48,68" />
+    <path android:strokeColor="#14213D" android:strokeWidth="1.6" android:strokeLineCap="round"
+        android:pathData="M60,56 C64,54.6 68,54.2 73,55 M60,62 C64,60.6 68,60.2 73,61 M60,68 C64,66.6 68,66.2 73,67" />
+</vector>
