@@ -89,7 +89,7 @@ fun AdminScreen(ctx: Ctx) {
                 Text("رمز الدعوة", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(d.marathon.inviteCode, fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = 6.sp, color = Brand.colors.gold)
                 OutlinedButton(onClick = {
-                    val link = "https://ahmad-nayfeh.github.io/marathon/join?code=${d.marathon.inviteCode}"
+                    val link = "https://ahmad-nayfeh.github.io/marathon/join/?code=${d.marathon.inviteCode}"
                     val msg = "انضم إلى «${d.marathon.name}» في تطبيق ماراثون القراءة.\nرمز الدعوة: ${d.marathon.inviteCode}\n$link"
                     context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, msg), "مشاركة الدعوة"))
                 }) { Text("مشاركة الدعوة") }

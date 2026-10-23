@@ -23,8 +23,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Invite links: https://ahmad-nayfeh.github.io/marathon/join?code=ABC123 -->
-            <intent-filter android:autoVerify="false">
+            <!-- Invite links: https://ahmad-nayfeh.github.io/marathon/join/?code=ABC123 (verified via /.well-known/assetlinks.json) -->
+            <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />

@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
         handle(intent)
     }
 
-    /** Invite links carry the code: https://ahmad-nayfeh.github.io/marathon/join?code=ABC123 */
+    /** Invite links carry the code: https://ahmad-nayfeh.github.io/marathon/join/?code=ABC123 */
     private fun handle(intent: Intent?) {
         val uri = intent?.data ?: return
         vm.offerCode(uri.getQueryParameter("code"))
