@@ -24,7 +24,6 @@ data class Settings(
 
 class Prefs(private val context: Context) {
     private object K {
-        val mode = stringPreferencesKey("mode")
         val marathonId = stringPreferencesKey("marathon_id")
         val role = stringPreferencesKey("role")
         val memberId = stringPreferencesKey("member_id")
@@ -36,18 +35,16 @@ class Prefs(private val context: Context) {
 
     suspend fun session(): Session? {
         val p = context.store.data.first()
-        val mode = p[K.mode]?.let { runCatching { Mode.valueOf(it) }.getOrNull() } ?: return null
         val id = p[K.marathonId] ?: return null
-        val role = p[K.role]?.let { runCatching { Role.valueOf(it) }.getOrNull() } ?: Role.ORGANIZER
-        return Session(mode, id, role, p[K.memberId])
+        val role = p[K.role]?.let { runCatching { Role.valueOf(it) }.getOrNull() } ?: return null
+        return Session(id, role, p[K.memberId])
     }
 
     suspend fun saveSession(s: Session?) {
         context.store.edit { p ->
             if (s == null) {
-                p.remove(K.mode); p.remove(K.marathonId); p.remove(K.role); p.remove(K.memberId)
-            } else {
-                p[K.mode] = s.mode.name
+                p.remove(K.marathonId); p.remove(K.role); p.remove(K.memberId)
+            } else if (!s.asAdmin) {
                 p[K.marathonId] = s.marathonId
                 p[K.role] = s.role.name
                 if (s.myMemberId != null) p[K.memberId] = s.myMemberId else p.remove(K.memberId)

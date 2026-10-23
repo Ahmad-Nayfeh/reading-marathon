@@ -1,5 +1,12 @@
 package com.readingmarathon.app.ui.screens
 
+import com.readingmarathon.app.ui.components.icon
+import com.readingmarathon.app.ui.components.IconBadge
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.rounded.WorkspacePremium
+import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -71,7 +78,7 @@ fun LeaderboardScreen(ctx: Ctx) {
             Spacer(Modifier.height(12.dp))
         }
         if (standings.none { it.score.totalPoints > 0 }) {
-            PaperCard { EmptyState("🏁", "لم تُسجَّل نقاط بعد", "حين يسجّل القرّاء دقائقهم سيظهر الترتيب هنا.") }
+            PaperCard { EmptyState(Icons.Rounded.Flag, "لم تُسجَّل نقاط بعد", "حين يسجّل القرّاء دقائقهم سيظهر الترتيب هنا.") }
             return@Page
         }
         Podium(standings.take(3), ctx)
@@ -88,7 +95,7 @@ fun LeaderboardScreen(ctx: Ctx) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { h ->
                         PaperCard(Modifier.weight(1f), padding = androidx.compose.foundation.layout.PaddingValues(14.dp)) {
-                            Text(h.emoji, fontSize = 24.sp)
+                            IconBadge(h.mark.icon)
                             Spacer(Modifier.height(4.dp))
                             Text(h.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(Names.join(h.names), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -122,7 +129,7 @@ private fun Podium(top: List<Standing>, ctx: Ctx) {
 @Composable
 private fun PodiumColumn(s: Standing, color: Color, height: Dp, avatar: Dp, modifier: Modifier, onClick: () -> Unit) {
     Column(modifier.clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (s.rank == 1) Text("👑", fontSize = 22.sp)
+        if (s.rank == 1) Icon(Icons.Rounded.WorkspacePremium, contentDescription = "الأول", tint = color, modifier = Modifier.size(26.dp))
         Avatar(s.score.member.name, s.score.member.id, size = avatar, ring = color)
         Spacer(Modifier.height(6.dp))
         Text(s.score.member.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)

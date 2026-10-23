@@ -1,5 +1,14 @@
 package com.readingmarathon.app.ui.screens
 
+import com.readingmarathon.app.ui.components.icon
+import com.readingmarathon.app.ui.components.IconBadge
+import androidx.compose.material.icons.rounded.Book
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.MenuBook
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -77,7 +86,7 @@ fun MyCardScreen(ctx: Ctx) {
     Page("بطاقتي", actions = { IconButton(onClick = { ctx.nav.navigate("settings") }) { Icon(Icons.Rounded.Settings, "الإعدادات") } }) {
         PaperCard {
             EmptyState(
-                "🪪", "أنت المشرف",
+                Icons.Rounded.AdminPanelSettings, "أنت المشرف",
                 "إن كنت تقرأ مع المجموعة فاختر اسمك من القائمة لتظهر بطاقتك هنا، أو أضف نفسك من صفحة الإدارة.",
             )
         }
@@ -99,7 +108,7 @@ fun MyCardScreen(ctx: Ctx) {
 fun MemberScreen(ctx: Ctx, id: String) {
     val m = ctx.data.member(id)
     if (m == null) {
-        Page("قارئ", onBack = { ctx.nav.popBackStack() }) { EmptyState("🔎", "القارئ غير موجود", "") }
+        Page("قارئ", onBack = { ctx.nav.popBackStack() }) { EmptyState(Icons.Rounded.SearchOff, "القارئ غير موجود", "") }
         return
     }
     MemberCard(ctx, m, isTab = false)
@@ -215,7 +224,7 @@ private fun MemberCard(ctx: Ctx, m: Member, isTab: Boolean) {
         SectionTitle("سجلّ القراءة")
         val history = mine.sortedByDescending { it.date }.take(40)
         if (history.isEmpty()) {
-            PaperCard { EmptyState("🕮", "لا قراءات بعد", "كل يوم قراءة يُسجَّل يظهر هنا.") }
+            PaperCard { EmptyState(Icons.Rounded.AutoStories, "لا قراءات بعد", "كل يوم قراءة يُسجَّل يظهر هنا.") }
         } else {
             PaperCard(padding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)) {
                 history.forEachIndexed { i, e ->
@@ -253,10 +262,12 @@ private fun BadgeGrid(earned: Map<BadgeKind, String>) {
                 val got = earned[k]
                 PaperCard(Modifier.weight(1f).alpha(if (got != null) 1f else 0.5f), padding = androidx.compose.foundation.layout.PaddingValues(10.dp)) {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            Modifier.size(46.dp).clip(RoundedCornerShape(50)).background(if (got != null) Brand.colors.goldSoft else MaterialTheme.colorScheme.surfaceContainerHigh),
-                            contentAlignment = Alignment.Center,
-                        ) { Text(if (got != null) k.emoji else "🔒", fontSize = 22.sp) }
+                        IconBadge(
+                            if (got != null) k.mark.icon else Icons.Rounded.Lock,
+                            size = 46.dp,
+                            tint = if (got != null) Brand.colors.gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                            background = if (got != null) Brand.colors.goldSoft else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        )
                         Spacer(Modifier.height(6.dp))
                         Text(k.title.removePrefix("وسام "), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
                         Text(got ?: k.rule, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 3)
@@ -272,13 +283,13 @@ private fun BadgeGrid(earned: Map<BadgeKind, String>) {
 private fun AchievementRow(ctx: Ctx, a: Achievement, canDelete: Boolean) {
     var confirm by remember { mutableStateOf(false) }
     val c = ctx.data.challenge(a.challengeId)
-    val (emoji, text) = when (a.type) {
-        AchievementType.FINISHED_COMMON_BOOK -> "📗" to "أنهى «${c?.book?.title.orEmpty()}»"
-        AchievementType.ATTENDED_DISCUSSION -> "🗣️" to "حضر نقاش «${c?.book?.title.orEmpty()}»"
-        AchievementType.FINISHED_OTHER_BOOK -> "📘" to "أنهى «${a.bookTitle.orEmpty()}»"
+    val (icon, text) = when (a.type) {
+        AchievementType.FINISHED_COMMON_BOOK -> Icons.Rounded.MenuBook to "أنهى «${c?.book?.title.orEmpty()}»"
+        AchievementType.ATTENDED_DISCUSSION -> Icons.Rounded.Forum to "حضر نقاش «${c?.book?.title.orEmpty()}»"
+        AchievementType.FINISHED_OTHER_BOOK -> Icons.Rounded.Book to "أنهى «${a.bookTitle.orEmpty()}»"
     }
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(emoji, fontSize = 20.sp)
+        IconBadge(icon)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(text, style = MaterialTheme.typography.titleSmall)

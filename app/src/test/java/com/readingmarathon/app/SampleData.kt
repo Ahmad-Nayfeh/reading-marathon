@@ -1,29 +1,31 @@
-package com.readingmarathon.core
+package com.readingmarathon.app
+
+import com.readingmarathon.core.*
 
 import java.time.LocalDate
 import kotlin.random.Random
 
-/** A believable sample marathon for the demo mode and screenshots. Deterministic for a given seed. */
-object DemoData {
+/** A deterministic 10-reader marathon used only by tests. */
+object SampleData {
 
     fun build(today: LocalDate, seed: Int = 7): MarathonData {
         val rnd = Random(seed)
         val names = listOf("سارة", "خالد", "نورة", "فهد", "ريم", "عبدالله", "لمى", "يوسف", "هيا", "ماجد")
-        val members = names.mapIndexed { i, n -> Member("m_demo_$i", n) }
+        val members = names.mapIndexed { i, n -> Member("m_t$i", n) }
         val past = Challenge(
-            id = "c_demo_1",
+            id = "c_t1",
             book = Book("الإنسان يبحث عن المعنى", "فيكتور فرانكل", 1946, 180),
             start = today.minusDays(52),
             end = today.minusDays(24),
         )
         val current = Challenge(
-            id = "c_demo_2",
+            id = "c_t2",
             book = Book("ثلاثية غرناطة", "رضوى عاشور", 1994, 504),
             start = today.minusDays(17),
             end = today.plusDays(12),
         )
         val next = Challenge(
-            id = "c_demo_3",
+            id = "c_t3",
             book = Book("الأيام", "طه حسين", 1929, 220),
             start = today.plusDays(14),
             end = today.plusDays(44),
@@ -53,7 +55,7 @@ object DemoData {
         val ach = mutableListOf<Achievement>()
         var n = 0
         fun add(m: Member, c: Challenge, t: AchievementType, date: LocalDate, title: String? = null) {
-            ach += Achievement("a_demo_${n++}", m.id, c.id, t, date, title)
+            ach += Achievement("a_t${n++}", m.id, c.id, t, date, title)
         }
         members.take(7).forEachIndexed { i, m -> add(m, past, AchievementType.FINISHED_COMMON_BOOK, past.start.plusDays(5L + i * 3)) }
         members.take(6).forEach { m -> add(m, past, AchievementType.ATTENDED_DISCUSSION, past.end.plusDays(1)) }
@@ -63,7 +65,7 @@ object DemoData {
         add(members[4], current, AchievementType.FINISHED_OTHER_BOOK, current.start.plusDays(9), "قواعد العشق الأربعون")
         add(members[0], current, AchievementType.FINISHED_OTHER_BOOK, current.start.plusDays(15), "رجال في الشمس")
         return MarathonData(
-            marathon = Marathon("demo", "ماراثون نادي الكتاب", inviteCode = "DEMO26"),
+            marathon = Marathon("sample", "ماراثون نادي الكتاب", inviteCode = "TEST26"),
             members = members,
             challenges = listOf(past, current, next),
             entries = entries,

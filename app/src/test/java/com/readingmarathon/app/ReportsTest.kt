@@ -5,7 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.readingmarathon.app.report.Reports
 import com.readingmarathon.app.report.Reports.challengeReport
 import com.readingmarathon.app.report.Reports.marathonReport
-import com.readingmarathon.core.DemoData
+import com.readingmarathon.app.SampleData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,7 +26,7 @@ import java.time.LocalDate
 class ReportsTest {
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
     private val today = LocalDate.of(2026, 10, 23)
-    private val data = DemoData.build(today)
+    private val data = SampleData.build(today)
     private val out = File("build/reports-out").apply { mkdirs() }
 
     private fun save(name: String, pages: List<Bitmap>) = pages.forEachIndexed { i, b ->

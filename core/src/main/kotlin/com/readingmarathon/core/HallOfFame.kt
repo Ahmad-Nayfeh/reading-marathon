@@ -5,7 +5,7 @@ import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
 
 /** One hall-of-fame title with everyone tied for it. */
-data class Hero(val emoji: String, val title: String, val names: List<String>, val value: String, val raw: Double)
+data class Hero(val mark: Mark, val title: String, val names: List<String>, val value: String, val raw: Double)
 
 object HallOfFame {
 
@@ -18,7 +18,7 @@ object HallOfFame {
         val scores = members.associateWith { Scoring.memberScore(data, it, scope) }
 
         fun pick(
-            emoji: String,
+            mark: Mark,
             title: String,
             metric: (Member) -> Double,
             fmt: (Double) -> String,
@@ -26,7 +26,7 @@ object HallOfFame {
             val values = members.associateWith(metric)
             val best = values.values.maxOrNull() ?: 0.0
             val names = if (best <= 0.0) emptyList() else values.filter { it.value == best }.keys.map { it.name }.sorted()
-            return Hero(emoji, title, names, if (names.isEmpty()) "—" else fmt(best), best)
+            return Hero(mark, title, names, if (names.isEmpty()) "—" else fmt(best), best)
         }
 
         val byMember = entries.groupBy { it.memberId }
@@ -34,14 +34,14 @@ object HallOfFame {
             (byMember[m.id].orEmpty().groupBy(key).values.maxOfOrNull { list -> list.sumOf { it.totalMinutes } } ?: 0).toDouble()
 
         return listOf(
-            pick("🧠", "العقل المدبّر", { scores.getValue(it).totalPoints.toDouble() }) { "${it.toInt()} نقطة" },
-            pick("⏳", "سيد الساعات", { scores.getValue(it).totalMinutes.toDouble() }) { "${Fmt.hours(it)} ساعة" },
-            pick("📚", "الدودة القارئة", { scores.getValue(it).booksFinished.toDouble() }) { "${it.toInt()} كتب" },
-            pick("💎", "صائد الدرر", { scores.getValue(it).quotes.toDouble() }) { "${it.toInt()} اقتباساً" },
-            pick("🏃", "صاحب النَفَس الطويل", { scores.getValue(it).readingDays.toDouble() }) { "${it.toInt()} يوم قراءة" },
-            pick("⚡", "العدّاء السريع", { maxBucket(it) { e -> e.date } }) { "${Fmt.hours(it)} ساعة في يوم" },
-            pick("⭐", "نجم الأسبوع", { maxBucket(it) { e -> weekStart(e.date) } }) { "${Fmt.hours(it)} ساعة في أسبوع" },
-            pick("💪", "عملاق الشهر", { maxBucket(it) { e -> e.date.withDayOfMonth(1) } }) { "${Fmt.hours(it)} ساعة في شهر" },
+            pick(Mark.POINTS, "العقل المدبّر", { scores.getValue(it).totalPoints.toDouble() }) { "${it.toInt()} نقطة" },
+            pick(Mark.HOURS, "سيد الساعات", { scores.getValue(it).totalMinutes.toDouble() }) { "${Fmt.hours(it)} ساعة" },
+            pick(Mark.BOOKS, "الدودة القارئة", { scores.getValue(it).booksFinished.toDouble() }) { "${it.toInt()} كتب" },
+            pick(Mark.QUOTES, "صائد الدرر", { scores.getValue(it).quotes.toDouble() }) { "${it.toInt()} اقتباساً" },
+            pick(Mark.DAYS, "صاحب النَفَس الطويل", { scores.getValue(it).readingDays.toDouble() }) { "${it.toInt()} يوم قراءة" },
+            pick(Mark.FAST, "العدّاء السريع", { maxBucket(it) { e -> e.date } }) { "${Fmt.hours(it)} ساعة في يوم" },
+            pick(Mark.WEEK, "نجم الأسبوع", { maxBucket(it) { e -> weekStart(e.date) } }) { "${Fmt.hours(it)} ساعة في أسبوع" },
+            pick(Mark.MONTH, "عملاق الشهر", { maxBucket(it) { e -> e.date.withDayOfMonth(1) } }) { "${Fmt.hours(it)} ساعة في شهر" },
         )
     }
 }

@@ -9,19 +9,18 @@ import com.readingmarathon.core.Member
 import com.readingmarathon.core.Rules
 import kotlinx.coroutines.flow.StateFlow
 
-enum class Mode { LOCAL, SHARED, DEMO }
-
 enum class Role { ORGANIZER, MEMBER }
 
-/** Who is using the app and against which marathon. */
+/** Which marathon is open on this device, and as whom. */
 data class Session(
-    val mode: Mode,
     val marathonId: String,
     val role: Role,
-    /** The member this device reads as (null for an organiser who doesn't read in the marathon). */
+    /** The member this account reads as (null for an organiser who doesn't read in the marathon). */
     val myMemberId: String?,
+    /** Opened from the platform admin panel rather than as a member. */
+    val asAdmin: Boolean = false,
 ) {
-    val isOrganizer: Boolean get() = role == Role.ORGANIZER
+    val isOrganizer: Boolean get() = role == Role.ORGANIZER || asAdmin
 }
 
 /**
@@ -50,8 +49,8 @@ interface MarathonStore {
 
     suspend fun applyImport(plan: CsvImport.Plan)
 
-    /** Shared mode: bind this device's account to a member. No-op locally. */
-    suspend fun linkMember(memberId: String) {}
+    /** Binds the signed-in account to a member. */
+    suspend fun linkMember(memberId: String)
 
     fun close() {}
 }

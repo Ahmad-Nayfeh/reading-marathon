@@ -1,5 +1,12 @@
 package com.readingmarathon.app.ui.screens
 
+import com.readingmarathon.app.ui.components.icon
+import com.readingmarathon.app.ui.components.IconBadge
+import androidx.compose.material.icons.rounded.MenuBook
+import androidx.compose.material.icons.rounded.WorkspacePremium
+import androidx.compose.material.icons.rounded.HourglassTop
+import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material.icons.rounded.LibraryBooks
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -64,7 +71,7 @@ fun ChallengesScreen(ctx: Ctx) {
     ) {
         if (list.isEmpty()) {
             PaperCard {
-                EmptyState("📚", "لا توجد تحديات", "كل تحدٍّ كتاب مشترك تقرؤه المجموعة في مدة محددة.") {
+                EmptyState(Icons.Rounded.LibraryBooks, "لا توجد تحديات", "كل تحدٍّ كتاب مشترك تقرؤه المجموعة في مدة محددة.") {
                     if (ctx.isOrganizer) Button(onClick = { ctx.editChallenge(null) }) { Text("أنشئ أول تحدٍّ") }
                 }
             }
@@ -105,7 +112,7 @@ fun ChallengeDetailScreen(ctx: Ctx, id: String) {
     val c = d.challenge(id)
     val context = LocalContext.current
     if (c == null) {
-        Page("التحدي", onBack = { ctx.nav.popBackStack() }) { EmptyState("🔎", "التحدي غير موجود", "ربما حُذف.") }
+        Page("التحدي", onBack = { ctx.nav.popBackStack() }) { EmptyState(Icons.Rounded.SearchOff, "التحدي غير موجود", "ربما حُذف.") }
         return
     }
     val scope = Scope.OfChallenge(c)
@@ -135,7 +142,7 @@ fun ChallengeDetailScreen(ctx: Ctx, id: String) {
         }
 
         if (c.status(ctx.today) == ChallengeStatus.UPCOMING) {
-            PaperCard { EmptyState("⏳", "لم يبدأ بعد", "يبدأ التحدي ${Dates.relative(c.start, ctx.today)}، في ${Dates.long(c.start)}.") }
+            PaperCard { EmptyState(Icons.Rounded.HourglassTop, "لم يبدأ بعد", "يبدأ التحدي ${Dates.relative(c.start, ctx.today)}، في ${Dates.long(c.start)}.") }
             return@Page
         }
 
@@ -200,7 +207,7 @@ fun ChallengeDetailScreen(ctx: Ctx, id: String) {
                 finishers.forEachIndexed { i, a ->
                     val m = d.member(a.memberId) ?: return@forEachIndexed
                     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (i == 0) "🥇" else "📗")
+                        IconBadge(if (i == 0) Icons.Rounded.WorkspacePremium else Icons.Rounded.MenuBook, size = 30.dp)
                         Spacer(Modifier.width(10.dp))
                         Text(m.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                         Text(Dates.short(a.date), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -213,7 +220,13 @@ fun ChallengeDetailScreen(ctx: Ctx, id: String) {
         if (news.isNotEmpty()) {
             SectionTitle("أبرز ما حدث")
             PaperCard {
-                news.forEach { n -> Text("${n.emoji}  ${n.text}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp)) }
+                news.forEach { n ->
+                    Row(Modifier.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconBadge(n.mark.icon, size = 30.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(n.text, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
         }
     }

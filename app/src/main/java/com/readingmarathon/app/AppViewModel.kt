@@ -1,14 +1,16 @@
 package com.readingmarathon.app
 
+import android.app.Activity
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.readingmarathon.app.data.Account
+import com.readingmarathon.app.data.AdminOverview
 import com.readingmarathon.app.data.MarathonStore
-import com.readingmarathon.app.data.Mode
+import com.readingmarathon.app.data.MarathonSummary
 import com.readingmarathon.app.data.Role
 import com.readingmarathon.app.data.Session
 import com.readingmarathon.app.data.Settings
-import com.readingmarathon.app.data.SharedSetup
 import com.readingmarathon.app.data.ThemeMode
 import com.readingmarathon.app.notify.Reminder
 import com.readingmarathon.core.Ids
@@ -21,22 +23,31 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
-/** App state: which marathon is open, its live data, settings, and one-line messages for the snackbar. */
+/** App state: the signed-in account, which marathon is open, its live data, and messages for the snackbar. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val marathonApp = app as MarathonApp
     private val prefs = marathonApp.prefs
+    private val backend = marathonApp.backend
 
-    /** null while the saved session is being read. */
-    private val _boot = MutableStateFlow(false)
-    val booted: StateFlow<Boolean> = _boot
+    val configured: Boolean get() = backend.configured
+    val account: StateFlow<Account?> = backend.account
+
+    private val _sessionLoaded = MutableStateFlow(false)
+
+    /** False while the saved sign-in and session are being restored. */
+    val booted: StateFlow<Boolean> = combine(backend.restoring, _sessionLoaded) { restoring, loaded -> !restoring && loaded }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _session = MutableStateFlow<Session?>(null)
     val session: StateFlow<Session?> = _session
@@ -54,68 +65,64 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy
 
+    /** The account's marathons, for the picker. null = not loaded yet. */
+    private val _mine = MutableStateFlow<List<MarathonSummary>?>(null)
+    val mine: StateFlow<List<MarathonSummary>?> = _mine
+
     /** An invite code that arrived through a link, waiting for the join screen. */
     private val _pendingCode = MutableStateFlow<String?>(null)
     val pendingCode: StateFlow<String?> = _pendingCode
 
-    val sharedAvailable: Boolean get() = SharedSetup.available
+    private val _admin = MutableStateFlow<AdminOverview?>(null)
+    val admin: StateFlow<AdminOverview?> = _admin
 
     fun today(): LocalDate = LocalDate.now()
 
     init {
         viewModelScope.launch {
-            prefs.session()?.let { open(it, persist = false) }
-            _boot.value = true
+            // Reopen the last marathon only once we know who is signed in.
+            backend.restoring.first { !it }
+            val saved = prefs.session()
+            if (saved != null && backend.account.value != null) {
+                runCatching { open(saved, persist = false) }
+            }
+            _sessionLoaded.value = true
         }
-    }
-
-    private suspend fun open(s: Session, persist: Boolean = true) {
-        if (s.mode == Mode.SHARED && !SharedSetup.available) {
-            // A build without Firebase cannot open a shared marathon; fall back to the welcome screen.
-            prefs.saveSession(null)
-            return
-        }
-        _store.value?.close()
-        _store.value = marathonApp.openStore(s)
-        _session.value = s
-        if (persist && s.mode != Mode.DEMO) prefs.saveSession(s)
-    }
-
-    fun say(text: String) { _messages.tryEmit(text) }
-
-    /** Runs a write; a broken rule becomes a message instead of a crash. Returns true on success. */
-    fun act(success: String? = null, then: () -> Unit = {}, block: suspend (MarathonStore) -> Unit) {
-        val store = _store.value ?: return
         viewModelScope.launch {
-            _busy.value = true
-            try {
-                block(store)
-                success?.let(::say)
-                then()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: RuleViolation) {
-                say(e.message ?: "تعذّر الحفظ.")
-            } catch (e: Exception) {
-                say(friendly(e))
-            } finally {
-                _busy.value = false
+            // Signing out (here or elsewhere) closes whatever was open.
+            backend.account.collect { acc ->
+                if (acc == null) closeSession(forget = false)
+                _mine.value = null
+                _admin.value = null
             }
         }
     }
 
-    private fun friendly(e: Exception): String {
-        val m = e.message.orEmpty()
-        return when {
-            "PERMISSION_DENIED" in m -> "لا تملك صلاحية هذا التعديل."
-            "UNAVAILABLE" in m || "network" in m.lowercase() -> "لا يوجد اتصال. سيُحفظ التعديل عند عودة الاتصال."
-            else -> "حدث خطأ غير متوقع. حاول مرة أخرى."
-        }
+    private suspend fun open(s: Session, persist: Boolean = true) {
+        _store.value?.close()
+        _store.value = backend.openStore(s.marathonId)
+        _session.value = s
+        if (persist) prefs.saveSession(s)
     }
 
-    private fun launchSetup(block: suspend () -> Unit) {
+    private suspend fun closeSession(forget: Boolean) {
+        _store.value?.close()
+        _store.value = null
+        _session.value = null
+        if (forget) prefs.saveSession(null)
+    }
+
+    fun say(text: String) { _messages.tryEmit(text) }
+
+    /** Runs a write; a broken rule becomes a message instead of a crash. */
+    fun act(success: String? = null, then: () -> Unit = {}, block: suspend (MarathonStore) -> Unit) {
+        val store = _store.value ?: return
+        run({ block(store); success?.let(::say); then() })
+    }
+
+    private fun run(block: suspend () -> Unit, quiet: Boolean = false) {
         viewModelScope.launch {
-            _busy.value = true
+            if (!quiet) _busy.value = true
             try {
                 block()
             } catch (e: CancellationException) {
@@ -125,95 +132,102 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 say(friendly(e))
             } finally {
-                _busy.value = false
+                if (!quiet) _busy.value = false
             }
         }
     }
 
-    // ---- Starting ----
-
-    /** A marathon kept on this phone. The organiser can also read in it under [readerName]. */
-    fun startLocal(name: String, readerName: String?) = launchSetup {
-        if (name.isBlank()) throw RuleViolation("اكتب اسم الماراثون.")
-        val id = Ids.newId("local_")
-        open(Session(Mode.LOCAL, id, Role.ORGANIZER, null))
-        val store = _store.value ?: return@launchSetup
-        store.renameMarathon(name.trim())
-        if (!readerName.isNullOrBlank()) {
-            val me = store.addMember(readerName.trim())
-            open(Session(Mode.LOCAL, id, Role.ORGANIZER, me.id))
+    private fun friendly(e: Exception): String {
+        val m = e.message.orEmpty()
+        return when {
+            "PERMISSION_DENIED" in m -> "لا تملك صلاحية هذا الإجراء."
+            "UNAVAILABLE" in m || "network" in m.lowercase() -> "لا يوجد اتصال بالإنترنت. حاول مرة أخرى."
+            else -> "حدث خطأ غير متوقع. حاول مرة أخرى."
         }
     }
 
-    fun startDemo() = launchSetup {
-        open(Session(Mode.DEMO, "demo", Role.ORGANIZER, "m_demo_0"), persist = false)
+    // ---- Account ----
+
+    fun signInWithGoogle(activity: Activity) = run({ backend.signInWithGoogle(activity) })
+
+    fun signInAsGuest() = run({ backend.signInAsGuest() })
+
+    fun signOut() = run({
+        closeSession(forget = true)
+        backend.signOut()
+    })
+
+    // ---- Marathons ----
+
+    fun loadMine() = run({ _mine.value = backend.myMarathons() }, quiet = true)
+
+    fun openMarathon(summary: MarathonSummary) = run({
+        // Re-read the role: the organiser may have changed it, or the account was removed.
+        val role = backend.roleIn(summary.id) ?: throw RuleViolation("لم تعد عضواً في هذا الماراثون.")
+        open(Session(summary.id, role, myMemberIdIn(summary.id)))
+    })
+
+    /** The member linked to this account, read once the store has loaded. */
+    private suspend fun myMemberIdIn(marathonId: String): String? {
+        val uid = backend.account.value?.uid ?: return null
+        val store = backend.openStore(marathonId)
+        return try {
+            withTimeoutOrNull(10_000) { store.data.first { it != null } }?.members?.firstOrNull { it.linkedUid == uid }?.id
+        } finally {
+            store.close()
+        }
     }
 
-    fun createShared(name: String, organizerName: String) = launchSetup {
-        val (id, memberId) = SharedSetup.create(name, organizerName)
-        open(Session(Mode.SHARED, id, Role.ORGANIZER, memberId))
-    }
+    fun createMarathon(name: String, organizerName: String) = run({
+        val (id, memberId) = backend.createMarathon(name, organizerName)
+        open(Session(id, Role.ORGANIZER, memberId))
+    })
 
-    fun joinShared(code: String) = launchSetup {
-        val id = SharedSetup.join(code)
-        val role = SharedSetup.roleIn(id) ?: Role.MEMBER
+    fun joinMarathon(code: String) = run({
+        val id = backend.joinMarathon(code)
         _pendingCode.value = null
-        open(Session(Mode.SHARED, id, role, null))
-    }
+        val role = backend.roleIn(id) ?: Role.MEMBER
+        open(Session(id, role, myMemberIdIn(id)))
+    })
 
     fun offerCode(code: String?) {
         if (!code.isNullOrBlank()) _pendingCode.value = Ids.normalizeCode(code)
     }
 
+    /** Back to the marathon list (nothing is deleted). */
+    fun switchMarathon() = run({ closeSession(forget = true); loadMine() })
+
     /** A member who just joined says who they are in the marathon. */
-    fun pickMember(memberId: String) = launchSetup {
-        val s = _session.value ?: return@launchSetup
+    fun pickMember(memberId: String) = run({
+        val s = _session.value ?: return@run
         _store.value?.linkMember(memberId)
         open(s.copy(myMemberId = memberId))
-    }
+    })
 
-    /** A new reader joining by name (shared mode: the organiser hasn't added them yet). */
-    fun joinAsNewMember(name: String) = launchSetup {
-        val s = _session.value ?: return@launchSetup
-        val store = _store.value ?: return@launchSetup
+    /** A new reader joining by name (the organiser hasn't added them yet). */
+    fun joinAsNewMember(name: String) = run({
+        val s = _session.value ?: return@run
+        val store = _store.value ?: return@run
         val m = store.addMember(name)
         store.linkMember(m.id)
         open(s.copy(myMemberId = m.id))
-    }
+    })
 
     /** The organiser reads as one of the members (or stops). */
-    fun setMyMember(memberId: String?) = launchSetup {
-        val s = _session.value ?: return@launchSetup
+    fun setMyMember(memberId: String?) = run({
+        val s = _session.value ?: return@run
         if (memberId != null) _store.value?.linkMember(memberId)
         open(s.copy(myMemberId = memberId))
-    }
+    })
 
-    /** Marathons kept on this phone, newest first: (id, name). Leaving one never deletes it. */
-    fun savedLocal(): List<Pair<String, String>> =
-        (java.io.File(marathonApp.filesDir, "marathons").listFiles { f -> f.extension == "json" } ?: emptyArray())
-            .sortedByDescending { it.lastModified() }
-            .mapNotNull { f -> com.readingmarathon.app.data.LocalStore.load(f)?.let { f.nameWithoutExtension to it.marathon.name } }
+    // ---- Platform admin ----
 
-    fun openLocal(id: String) = launchSetup {
-        open(Session(Mode.LOCAL, id, Role.ORGANIZER, null))
-    }
+    fun loadAdmin() = run({ _admin.value = backend.adminOverview() }, quiet = true)
 
-    /** Restores a JSON backup as a marathon on this phone (a fresh copy; the original is untouched). */
-    fun restoreBackup(json: String) = launchSetup {
-        val parsed = runCatching { com.readingmarathon.core.MarathonJson.decodeFromString(MarathonData.serializer(), json) }.getOrNull()
-            ?: throw RuleViolation("الملف ليس نسخة احتياطية صالحة من ماراثون القراءة.")
-        val id = Ids.newId("local_")
-        com.readingmarathon.app.data.LocalStore.save(marathonApp.localFile(id), parsed.copy(marathon = parsed.marathon.copy(id = id)))
-        open(Session(Mode.LOCAL, id, Role.ORGANIZER, null))
-        say("استُعيدت النسخة: ${parsed.members.size} قارئاً و${parsed.entries.size} يوم قراءة.")
-    }
-
-    fun leave() = launchSetup {
-        _store.value?.close()
-        _store.value = null
-        _session.value = null
-        prefs.saveSession(null)
-    }
+    /** Opens any marathon from the admin panel, with organiser rights. */
+    fun adminOpen(marathonId: String) = run({
+        open(Session(marathonId, backend.roleIn(marathonId) ?: Role.ORGANIZER, myMemberIdIn(marathonId), asAdmin = true), persist = false)
+    })
 
     // ---- Settings ----
 

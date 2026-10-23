@@ -259,7 +259,7 @@ private fun EntryForm(ctx: Ctx, memberId: String, date: LocalDate, onDone: () ->
                 if (finishedOther) add(Achievement(Ids.newId("a_"), memberId, c.id, AchievementType.FINISHED_OTHER_BOOK, date, otherTitle.trim()))
             }
             val message = when {
-                newAchievements.any { it.type == AchievementType.FINISHED_COMMON_BOOK } -> "مبارك! أنهيت الكتاب المشترك 🎉"
+                newAchievements.any { it.type == AchievementType.FINISHED_COMMON_BOOK } -> "مبارك! أنهيت الكتاب المشترك."
                 common + other == 0 && existing != null && !quoteCommon && !quoteOther -> "حُذف تسجيل اليوم."
                 else -> "حُفظت قراءتك. +$preview نقطة"
             }

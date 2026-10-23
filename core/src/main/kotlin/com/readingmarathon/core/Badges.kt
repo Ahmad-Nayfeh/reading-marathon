@@ -2,12 +2,12 @@ package com.readingmarathon.core
 
 import java.time.LocalDate
 
-enum class BadgeKind(val emoji: String, val title: String, val rule: String) {
-    PHILOSOPHER("✍️", "وسام الفيلسوف", "أكثر من 10 اقتباسات"),
-    RUNNER("🏃", "وسام العدّاء", "إنهاء الكتاب المشترك خلال أول 7 أيام من التحدي"),
-    PERSISTENCE("💯", "وسام المثابرة", "7 أيام قراءة متتالية أو أكثر"),
-    DEVOURER("📚", "وسام الملتهم", "إنهاء 3 كتب أو أكثر في تحدٍ واحد"),
-    DEBATER("🗣️", "وسام المحاور", "حضور جلسة النقاش في 3 تحديات"),
+enum class BadgeKind(val mark: Mark, val title: String, val rule: String) {
+    PHILOSOPHER(Mark.QUOTES, "وسام الفيلسوف", "أكثر من 10 اقتباسات"),
+    RUNNER(Mark.EARLY_FINISH, "وسام العدّاء", "إنهاء الكتاب المشترك خلال أول 7 أيام من التحدي"),
+    PERSISTENCE(Mark.STREAK, "وسام المثابرة", "7 أيام قراءة متتالية أو أكثر"),
+    DEVOURER(Mark.BOOKS, "وسام الملتهم", "إنهاء 3 كتب أو أكثر في تحدٍ واحد"),
+    DEBATER(Mark.DISCUSSION, "وسام المحاور", "حضور جلسة النقاش في 3 تحديات"),
 }
 
 data class Badge(val kind: BadgeKind, val detail: String, val earnedOn: LocalDate?)

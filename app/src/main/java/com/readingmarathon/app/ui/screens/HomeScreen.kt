@@ -1,5 +1,9 @@
 package com.readingmarathon.app.ui.screens
 
+import com.readingmarathon.app.ui.components.icon
+import com.readingmarathon.app.ui.components.IconBadge
+import androidx.compose.material.icons.rounded.LocalFireDepartment
+import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -78,7 +82,7 @@ fun HomeScreen(ctx: Ctx) {
         if (challenge == null) {
             PaperCard {
                 EmptyState(
-                    "📖", "لا يوجد تحدٍّ بعد",
+                    Icons.Rounded.AutoStories, "لا يوجد تحدٍّ بعد",
                     if (ctx.isOrganizer) "أنشئ أول تحدٍّ: اختر الكتاب المشترك وتاريخ البداية والنهاية." else "سيظهر هنا التحدي حين ينشئه المشرف.",
                 ) {
                     if (ctx.isOrganizer) Button(onClick = { ctx.editChallenge(null) }) { Text("أنشئ تحدياً") }
@@ -98,7 +102,7 @@ fun HomeScreen(ctx: Ctx) {
                     news.take(6).forEachIndexed { i, n ->
                         if (i > 0) Spacer(Modifier.height(12.dp))
                         Row(verticalAlignment = Alignment.Top) {
-                            Text(n.emoji, fontSize = 20.sp)
+                            IconBadge(n.mark.icon, size = 30.dp)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(n.text, style = MaterialTheme.typography.bodyMedium)
@@ -203,7 +207,7 @@ private fun TodayCard(ctx: Ctx, challenge: Challenge) {
     PaperCard {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatTile(todayEntry?.let { Fmt.duration(it.totalMinutes) } ?: "—", "قراءتك اليوم", Modifier.weight(1f))
-            StatTile(if (streak > 0) "$streak 🔥" else "0", "أيام متتالية", Modifier.weight(1f))
+            StatTile("$streak", "أيام متتالية", Modifier.weight(1f), icon = Icons.Rounded.LocalFireDepartment)
             StatTile(mine?.let { "#${it.rank}" } ?: "—", "${mine?.score?.totalPoints ?: 0} نقطة", Modifier.weight(1f))
         }
         Spacer(Modifier.height(14.dp))

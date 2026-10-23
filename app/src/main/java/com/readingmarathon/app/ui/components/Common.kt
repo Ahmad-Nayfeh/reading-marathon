@@ -130,9 +130,9 @@ fun Pill(text: String, modifier: Modifier = Modifier, color: Color = MaterialThe
 }
 
 @Composable
-fun EmptyState(emoji: String, title: String, body: String, modifier: Modifier = Modifier, action: @Composable (() -> Unit)? = null) {
+fun EmptyState(icon: ImageVector, title: String, body: String, modifier: Modifier = Modifier, action: @Composable (() -> Unit)? = null) {
     Column(modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(emoji, fontSize = 40.sp)
+        IconBadge(icon, size = 56.dp)
         Spacer(Modifier.height(10.dp))
         Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))

@@ -90,7 +90,7 @@ class BadgesAndAnalyticsTest {
     @Test
     fun `demo data is consistent with the rules`() {
         val today = LocalDate.of(2026, 10, 23)
-        val demo = DemoData.build(today)
+        val demo = SampleData.build(today)
         demo.entries.forEach { Validation.entry(it, today, asOrganizer = true) }
         demo.challenges.forEach { Validation.challenge(it, demo.challenges) }
         val st = Scoring.standings(demo, Scope.OfChallenge(demo.currentChallenge(today)!!))
