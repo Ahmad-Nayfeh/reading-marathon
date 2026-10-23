@@ -4,7 +4,7 @@ import android.app.Activity
 import kotlinx.coroutines.flow.StateFlow
 
 /** The platform owner. Only this Google account sees the platform admin panel (enforced again in firestore.rules). */
-const val ADMIN_EMAIL = "ahmad2224466@gmail.com"
+const val ADMIN_EMAIL = "readingmarathon.admin@gmail.com"
 
 /** Who is signed in. Guests have no email until they link a Google account. */
 data class Account(
