@@ -246,6 +246,8 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
             a.signInWithCredential(credential).await()
         }
         a.currentUser?.reload()?.await()
+        // Fresh token, so the security rules see the newly linked email.
+        runCatching { a.currentUser?.getIdToken(true)?.await() }
         a.currentUser?.let { _account.value = it.toAccount(); touchUser(it) }
     }
 
