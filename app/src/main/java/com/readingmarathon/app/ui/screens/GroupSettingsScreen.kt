@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.Refresh
@@ -91,7 +91,7 @@ fun GroupSettingsScreen(id: String) {
                 RowItem("«${c.book.title}»", Dates.span(c.start, c.end), onClick = { nav.book(id, c.id) })
             }
             if (d.challenges.isNotEmpty()) ListDivider()
-            RowItem("كتاب جديد", icon = Icons.Rounded.Add, onClick = { nav.book(id, null) })
+            RowItem("كتاب جديد", icon = Icons.AutoMirrored.Rounded.MenuBook, onClick = { nav.book(id, null) })
         }
 
         SectionLabel("المجموعة")

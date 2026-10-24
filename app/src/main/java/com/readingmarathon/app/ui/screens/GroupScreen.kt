@@ -18,13 +18,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.automirrored.rounded.Logout
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PersonAddAlt
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
@@ -132,7 +131,7 @@ fun GroupScreen(id: String) {
         subtitle = d.group.about.ifBlank { null },
         actions = {
             IconButton(onClick = { shareText(context, inviteText(d.group.name, d.group.inviteCode), "دعوة إلى المجموعة") }) {
-                Icon(Icons.Rounded.PersonAddAlt, "ادعُ قارئاً")
+                Icon(Icons.Rounded.Share, "ادعُ قارئاً")
             }
             if (manager) IconButton(onClick = { nav.groupSettings(id) }) { Icon(Icons.Rounded.Settings, "إعدادات المجموعة") }
             if (d.group.roleOf(uid) != null) {
@@ -193,7 +192,7 @@ private fun CurrentBook(d: GroupData, c: Challenge?, uid: String, today: LocalDa
                 Icons.Rounded.Flag, "لا يوجد كتاب مشترك بعد",
                 if (manager) "اختر كتاباً ومدة، فيتسابق الأعضاء على قراءته. القراءة تُحسب للمجموعة حتى دون كتاب."
                 else "حين يختار مشرف المجموعة كتاباً سيظهر هنا. قراءتك تُحسب في الترتيب على كل حال.",
-            ) { if (manager) PrimaryButton("أضف كتاباً", onClick = { nav.book(d.group.id, null) }, icon = Icons.Rounded.Add) }
+            ) { if (manager) PrimaryButton("أضف كتاباً", onClick = { nav.book(d.group.id, null) }, icon = Icons.AutoMirrored.Rounded.MenuBook) }
         }
         return
     }
@@ -254,7 +253,7 @@ private fun CurrentBook(d: GroupData, c: Challenge?, uid: String, today: LocalDa
             Spacer(Modifier.height(14.dp))
             if (mine == null) {
                 GhostButton(
-                    "أتممت الكتاب (+${Fmt.points(d.group.rules.finishBonus)})",
+                    "أتممت الكتاب (${Fmt.points(d.group.rules.finishBonus)})",
                     onClick = { vm.run("مبارك! سُجّل إتمامك الكتاب.") { vm.backend.setFinished(d.group.id, c.id, today) } },
                     icon = Icons.Rounded.Flag, modifier = Modifier.fillMaxWidth(),
                 )
@@ -434,5 +433,5 @@ private fun Books(d: GroupData, today: LocalDate, manager: Boolean) {
         }
         Spacer(Modifier.height(10.dp))
     }
-    if (manager) GhostButton("كتاب جديد", onClick = { nav.book(d.group.id, null) }, icon = Icons.Rounded.Add, modifier = Modifier.fillMaxWidth())
+    if (manager) GhostButton("كتاب جديد", onClick = { nav.book(d.group.id, null) }, icon = Icons.AutoMirrored.Rounded.MenuBook, modifier = Modifier.fillMaxWidth())
 }

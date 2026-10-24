@@ -15,7 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Search
@@ -184,7 +184,7 @@ internal fun AdminBooks(version: Int, refresh: () -> Unit) {
     val all = books ?: return Loading()
     val live = all.filter { it.status != BookStatus.MERGED }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        PrimaryButton("كتاب جديد", onClick = { editing = CatalogBook("", "", "") }, icon = Icons.Rounded.Add, modifier = Modifier.weight(1f))
+        PrimaryButton("كتاب جديد", onClick = { editing = CatalogBook("", "", "") }, icon = Icons.AutoMirrored.Rounded.MenuBook, modifier = Modifier.weight(1f))
         GhostButton("استيراد قائمة", onClick = { importing = true }, icon = Icons.Rounded.FileUpload)
     }
     Spacer(Modifier.height(10.dp))

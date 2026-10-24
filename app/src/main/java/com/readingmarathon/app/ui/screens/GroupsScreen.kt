@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.TravelExplore
@@ -59,7 +59,7 @@ fun GroupsScreen() {
 
     Page("المجموعات", subtitle = "قراءتك تُحسب في كل مجموعة تنضم إليها.") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryButton("مجموعة جديدة", onClick = nav::create, icon = Icons.Rounded.Add, modifier = Modifier.weight(1f))
+            PrimaryButton("مجموعة جديدة", onClick = nav::create, icon = Icons.Rounded.Groups, modifier = Modifier.weight(1f))
             GhostButton("انضم برمز", onClick = { nav.join() }, icon = Icons.Rounded.Key)
         }
         if (mine.isNotEmpty()) {

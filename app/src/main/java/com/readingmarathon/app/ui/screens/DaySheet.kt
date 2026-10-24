@@ -21,8 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -105,14 +105,14 @@ fun DaySheet(initial: LocalDate, initialBook: String?, onDismiss: () -> Unit) {
                 Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                     FilledTonalIconButton(onClick = { minutes = (minutes + 5).coerceAtMost(Limits.MAX_MINUTES_PER_DAY) }, modifier = Modifier.size(52.dp)) {
-                        Icon(Icons.Rounded.Add, "خمس دقائق أكثر")
+                        Icon(Icons.Rounded.KeyboardArrowUp, "خمس دقائق أكثر")
                     }
                     Column(Modifier.width(150.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("$minutes", fontSize = 48.sp, fontWeight = FontWeight.Light)
                         Text(if (minutes >= 60) Fmt.duration(minutes) else "دقيقة", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     FilledTonalIconButton(onClick = { minutes = (minutes - 5).coerceAtLeast(0) }, modifier = Modifier.size(52.dp)) {
-                        Icon(Icons.Rounded.Remove, "خمس دقائق أقل")
+                        Icon(Icons.Rounded.KeyboardArrowDown, "خمس دقائق أقل")
                     }
                 }
                 Spacer(Modifier.height(16.dp))

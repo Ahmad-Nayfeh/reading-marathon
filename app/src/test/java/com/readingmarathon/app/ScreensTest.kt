@@ -153,7 +153,7 @@ class ScreensTest {
         backend.signIn(sara)
         waitFor("مجموعاتي")
         shot("02-home")
-        tap("\u2066+30\u2069")
+        tap("30 د")
         assertEquals(30, backend.readsBy.getValue("u_sara")[Read.readId(today, "b_ayyam")]?.minutes)
         assertTrue(backend.all.getValue("g_club").entries.any { it.memberId == "u_sara" && it.date == today && it.minutes == 30 && it.sharedMinutes == 30 })
         shot("03-home-logged")

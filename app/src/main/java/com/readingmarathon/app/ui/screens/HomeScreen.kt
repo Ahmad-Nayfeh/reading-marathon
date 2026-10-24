@@ -21,15 +21,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Campaign
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -102,9 +101,7 @@ fun HomeScreen(onGroups: () -> Unit) {
                         if (a.title.isNotBlank()) Text(a.title, style = MaterialTheme.typography.titleMedium)
                         if (a.body.isNotBlank()) Text(a.body, style = MaterialTheme.typography.bodyMedium)
                     }
-                    IconButton(onClick = { vm.dismiss(a.id) }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Rounded.Close, "إخفاء", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    TextButton(onClick = { vm.dismiss(a.id) }) { Text("حسناً") }
                 }
             }
         }
@@ -221,7 +218,7 @@ private fun BookLogCard(b: ShelfBook, todayMinutes: Int, timerRunning: Boolean) 
         }
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(15, 30, 45, 60).forEach { m -> Choice("\u2066+$m\u2069", false, Modifier.weight(1f)) { vm.quickAdd(b.bookId, m) } }
+            listOf(15, 30, 45, 60).forEach { m -> Choice("$m د", false, Modifier.weight(1f)) { vm.quickAdd(b.bookId, m) } }
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

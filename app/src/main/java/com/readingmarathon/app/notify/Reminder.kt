@@ -94,7 +94,7 @@ object Reminder {
             .setContentText(book?.let { "سجّل لـ«$it» من هنا مباشرة:" } ?: "سجّل من هنا مباشرة:")
             .setContentIntent(openApp(context))
             .setAutoCancel(true)
-        QUICK.forEach { m -> b.addAction(0, "+$m د", broadcast(context, ACTION_ADD, m)) }
+        QUICK.forEach { m -> b.addAction(0, "$m د", broadcast(context, ACTION_ADD, m)) }
         runCatching { NotificationManagerCompat.from(context).notify(REMINDER_ID, b.build()) }
     }
 

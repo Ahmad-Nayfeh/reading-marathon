@@ -15,7 +15,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -61,7 +60,7 @@ fun ShelfScreen() {
     var open by remember { mutableStateOf<ShelfBook?>(null) }
 
     Page("رفّي", subtitle = "كتبك أنت، في مجموعة أو بدونها.") {
-        PrimaryButton("أضف كتاباً", onClick = nav::addBook, icon = Icons.Rounded.Add)
+        PrimaryButton("أضف كتاباً", onClick = nav::addBook, icon = Icons.AutoMirrored.Rounded.MenuBook)
         Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             tabs.forEach { (st, label) -> Choice("$label (${shelf.count { it.status == st }})", tab == st, Modifier.weight(1f)) { tab = st } }

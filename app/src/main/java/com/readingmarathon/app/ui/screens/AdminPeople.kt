@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
@@ -172,7 +171,7 @@ internal fun AdminNews(version: Int, refresh: () -> Unit) {
     var editing by remember { mutableStateOf<Announcement?>(null) }
     LaunchedEffect(version) { vm.run(quiet = true) { list = vm.backend.adminAnnouncements() } }
     val all = list ?: return Loading()
-    PrimaryButton("إعلان جديد", onClick = { editing = Announcement("", "", "") }, icon = Icons.Rounded.Add)
+    PrimaryButton("إعلان جديد", onClick = { editing = Announcement("", "", "") }, icon = Icons.Rounded.Campaign)
     Spacer(Modifier.height(8.dp))
     Text("يظهر الإعلان النشط أعلى الرئيسية لكل القرّاء حتى يغلقه كل منهم.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(10.dp))
