@@ -7,33 +7,31 @@ import java.time.format.DateTimeFormatter
  * Import of the legacy Google Form responses ("Form Responses 1" exported as CSV).
  *
  * Columns are found by their Arabic question titles (both legacy variants), dates may be
- * DD/MM/YYYY, D/M/YYYY, YYYY-MM-DD or M/D/YYYY (US locale sheets), durations are H:MM:SS.
- * Rows for the same member and day are merged into one entry (minutes summed, quotes OR-ed).
+ * D/M/YYYY or YYYY-MM-DD, durations are H:MM:SS. Minutes of the common book and of other books
+ * are added together: the app now counts all reading the same way.
  */
 object CsvImport {
 
     data class Row(
         val name: String,
         val date: LocalDate,
-        val commonMinutes: Int,
-        val otherMinutes: Int,
-        val quoteCommon: Boolean,
-        val quoteOther: Boolean,
+        val minutes: Int,
         val finishedCommon: Boolean,
-        val finishedOther: Boolean,
-        val attended: Boolean,
         val timestamp: String,
     )
 
     data class Parsed(val rows: List<Row>, val skipped: List<String>)
 
     data class Plan(
-        val entries: List<Entry>,
-        val achievements: List<Achievement>,
         val newMembers: List<Member>,
-        val outsideChallenges: Int,
+        val entries: List<Entry>,
+        val finishes: List<Finish>,
+        /** Days already in the group, left as they are. */
+        val existingDays: Int,
         val skipped: List<String>,
-    )
+    ) {
+        val isEmpty: Boolean get() = newMembers.isEmpty() && entries.isEmpty() && finishes.isEmpty()
+    }
 
     fun parse(csv: String): Parsed {
         val table = parseCsv(csv)
@@ -44,11 +42,10 @@ object CsvImport {
         val iDate = col("تاريخ القراءة")
         val iCommon = col("مدة قراءة الكتاب المشترك")
         val iOther = col("مدة قراءة كتاب آخر")
-        val iQuotes = col("ما هي الاقتباسات")
         val iAch = col("إنجازات الكتب والنقاش")
         val iTs = header.indexOfFirst { it.equals("Timestamp", true) || it.startsWith("الطابع الزمني") }
         if (iName < 0 || iDate < 0) {
-            return Parsed(emptyList(), listOf("لم أجد عمودي «اسمك» و«تاريخ القراءة». تأكد أن الملف مُصدَّر من تبويب Form Responses 1."))
+            return Parsed(emptyList(), listOf("لم أجد عمودي «اسمك» و«تاريخ القراءة». صدّر تبويب Form Responses 1 بصيغة CSV."))
         }
         val rows = mutableListOf<Row>()
         val skipped = mutableListOf<String>()
@@ -59,68 +56,44 @@ object CsvImport {
             if (name.isEmpty()) { skipped += "السطر $line: بلا اسم"; return@forEachIndexed }
             val date = parseDate(cell(iDate))
             if (date == null) { skipped += "السطر $line: تاريخ غير مفهوم «${cell(iDate)}»"; return@forEachIndexed }
-            val quotes = cell(iQuotes)
-            val ach = cell(iAch)
             rows += Row(
                 name = name,
                 date = date,
-                commonMinutes = parseDuration(cell(iCommon)),
-                otherMinutes = parseDuration(cell(iOther)),
-                quoteCommon = quotes.contains("الكتاب المشترك"),
-                quoteOther = quotes.contains("كتاب آخر"),
-                finishedCommon = ach.contains("أنهيت الكتاب المشترك"),
-                finishedOther = ach.contains("أنهيت كتاباً آخر") || ach.contains("أنهيت كتابا آخر"),
-                attended = ach.contains("حضرت جلسة النقاش"),
+                minutes = parseDuration(cell(iCommon)) + parseDuration(cell(iOther)),
+                finishedCommon = cell(iAch).contains("أنهيت الكتاب المشترك"),
                 timestamp = cell(iTs),
             )
         }
         return Parsed(rows, skipped)
     }
 
-    /** Turns parsed rows into entries/achievements for [data], creating members for unknown names. */
-    fun plan(parsed: Parsed, data: MarathonData, newId: () -> String = { Ids.newId("m_") }): Plan {
-        val byName = data.members.associateBy { Text.normalize(it.name) }.toMutableMap()
+    /**
+     * Turns parsed rows into group data. Names are matched to members (Arabic-aware); unknown names
+     * become readers without the app, whom an admin can later merge into the real account.
+     * Rows for the same reader and day are summed. Days the group already has are left alone.
+     */
+    fun plan(parsed: Parsed, data: GroupData, newId: () -> String = { Ids.newId("m_") }): Plan {
+        val byName = data.members.filter { it.active }.associateBy { Text.normalize(it.name) }.toMutableMap()
         val newMembers = mutableListOf<Member>()
         fun memberFor(name: String): Member = byName.getOrPut(Text.normalize(name)) {
-            Member(newId(), name.trim()).also { newMembers += it }
+            Member(newId(), name.trim().take(Limits.MAX_NAME)).also { newMembers += it }
         }
         val merged = LinkedHashMap<String, Entry>()
-        val achievements = mutableListOf<Achievement>()
-        var outside = 0
-        val otherCount = HashMap<String, Int>()
+        val finishes = LinkedHashMap<String, Finish>()
         for (r in parsed.rows.sortedBy { it.timestamp }) {
             val m = memberFor(r.name)
             val key = Entry.entryId(m.id, r.date)
-            val prev = merged[key]
-            merged[key] = Entry(
-                memberId = m.id,
-                date = r.date,
-                commonMinutes = (prev?.commonMinutes ?: 0) + r.commonMinutes,
-                otherMinutes = (prev?.otherMinutes ?: 0) + r.otherMinutes,
-                quoteCommon = (prev?.quoteCommon ?: false) || r.quoteCommon,
-                quoteOther = (prev?.quoteOther ?: false) || r.quoteOther,
-            ).let { it.copy(commonMinutes = minOf(it.commonMinutes, Limits.MAX_MINUTES_PER_DAY), otherMinutes = minOf(it.otherMinutes, Limits.MAX_MINUTES_PER_DAY - minOf(it.commonMinutes, Limits.MAX_MINUTES_PER_DAY))) }
-            val c = data.challenges.firstOrNull { it.acceptsAchievementOn(r.date) }
-            if (c == null) {
-                if (r.finishedCommon || r.attended || r.finishedOther) outside++
-                continue
-            }
-            fun has(type: AchievementType) = (data.achievements + achievements).any { it.memberId == m.id && it.challengeId == c.id && it.type == type }
-            if (r.finishedCommon && !has(AchievementType.FINISHED_COMMON_BOOK)) {
-                achievements += Achievement(Ids.newId("a_"), m.id, c.id, AchievementType.FINISHED_COMMON_BOOK, r.date)
-            }
-            if (r.attended && !has(AchievementType.ATTENDED_DISCUSSION)) {
-                achievements += Achievement(Ids.newId("a_"), m.id, c.id, AchievementType.ATTENDED_DISCUSSION, r.date)
-            }
-            if (r.finishedOther) {
-                // Legacy forms never asked for the title; number them so each finish stays unique.
-                val n = otherCount.merge(m.id, 1, Int::plus)!!
-                achievements += Achievement(Ids.newId("a_"), m.id, c.id, AchievementType.FINISHED_OTHER_BOOK, r.date, "كتاب آخر (مستورد) $n")
+            val sum = (merged[key]?.minutes ?: 0) + r.minutes
+            merged[key] = Entry(m.id, r.date, sum.coerceAtMost(Limits.MAX_MINUTES_PER_DAY))
+            if (r.finishedCommon) {
+                val c = data.challenges.firstOrNull { it.acceptsFinishOn(r.date) } ?: continue
+                val f = Finish(m.id, c.id, r.date)
+                if (data.finishes.none { it.id == f.id }) finishes.putIfAbsent(f.id, f)
             }
         }
-        val existing = data.entries.associateBy { it.id }
-        val entries = merged.values.filter { it.id !in existing }
-        return Plan(entries, achievements, newMembers, outside, parsed.skipped)
+        val existing = data.entries.map { it.id }.toSet()
+        val fresh = merged.values.filter { it.minutes > 0 && it.id !in existing }
+        return Plan(newMembers, fresh, finishes.values.toList(), merged.values.count { it.id in existing }, parsed.skipped)
     }
 
     fun parseDuration(s: String): Int {

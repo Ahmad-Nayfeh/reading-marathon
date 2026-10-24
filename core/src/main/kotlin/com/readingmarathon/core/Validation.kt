@@ -5,78 +5,52 @@ import java.time.LocalDate
 /** Why an action was refused, in Arabic, ready to show. */
 class RuleViolation(message: String) : IllegalArgumentException(message)
 
-object Limits {
-    const val MAX_MINUTES_PER_DAY = 16 * 60
-    const val MEMBER_BACKDATE_DAYS = 14L
-    const val MAX_NAME = 40
-    const val MAX_TITLE = 120
-}
-
 object Validation {
 
-    fun entry(e: Entry, today: LocalDate, asOrganizer: Boolean) {
-        if (e.date.isAfter(today)) throw RuleViolation("لا يمكن تسجيل قراءة بتاريخ في المستقبل.")
-        if (!asOrganizer && e.date.isBefore(today.minusDays(Limits.MEMBER_BACKDATE_DAYS))) {
-            throw RuleViolation("يمكن تسجيل القراءة بأثر رجعي حتى ${Limits.MEMBER_BACKDATE_DAYS} يوماً فقط. اطلب من المشرف تسجيل الأيام الأقدم.")
+    fun day(date: LocalDate, minutes: Int, today: LocalDate) {
+        if (date.isAfter(today)) throw RuleViolation("لا يمكن تسجيل قراءة ليوم لم يأتِ بعد.")
+        if (date.isBefore(today.minusDays(Limits.BACKDATE_DAYS))) {
+            throw RuleViolation("يمكن تسجيل الأيام السابقة حتى ${Limits.BACKDATE_DAYS} يوماً فقط.")
         }
-        if (e.commonMinutes < 0 || e.otherMinutes < 0) throw RuleViolation("الدقائق لا تكون سالبة.")
-        if (e.totalMinutes > Limits.MAX_MINUTES_PER_DAY) throw RuleViolation("المجموع أكبر من 16 ساعة في يوم واحد.")
+        if (minutes < 0) throw RuleViolation("الدقائق لا تكون سالبة.")
+        if (minutes > Limits.MAX_MINUTES_PER_DAY) throw RuleViolation("أكثر من 16 ساعة في يوم واحد؟ راجع الرقم.")
     }
 
-    fun memberName(name: String, existing: List<Member>, selfId: String? = null) {
+    fun personName(name: String) {
         val n = name.trim()
-        if (n.isEmpty()) throw RuleViolation("اكتب اسم العضو.")
+        if (n.isEmpty()) throw RuleViolation("اكتب الاسم.")
         if (n.length > Limits.MAX_NAME) throw RuleViolation("الاسم أطول من ${Limits.MAX_NAME} حرفاً.")
-        if (existing.any { it.id != selfId && Text.normalize(it.name) == Text.normalize(n) }) {
-            throw RuleViolation("يوجد عضو بهذا الاسم.")
+    }
+
+    /** A name for a reader without the app must not clash with another member of the group. */
+    fun memberName(name: String, existing: List<Member>, selfId: String? = null) {
+        personName(name)
+        if (existing.any { it.id != selfId && it.active && Text.normalize(it.name) == Text.normalize(name) }) {
+            throw RuleViolation("في المجموعة عضو بهذا الاسم.")
         }
     }
 
-    /** Challenges may not overlap (a day must belong to at most one challenge). */
+    fun group(name: String, about: String, rules: Rules) {
+        if (name.isBlank()) throw RuleViolation("اكتب اسم المجموعة.")
+        if (name.trim().length > Limits.MAX_TITLE) throw RuleViolation("اسم المجموعة طويل جداً.")
+        if (about.length > Limits.MAX_ABOUT) throw RuleViolation("الوصف أطول من ${Limits.MAX_ABOUT} حرفاً.")
+        if (!rules.isValid()) throw RuleViolation("دقائق النقطة بين 1 و600، ومكافأة إنهاء الكتاب بين 0 و10000.")
+    }
+
+    /** Challenges may not overlap, so every day belongs to at most one book. */
     fun challenge(c: Challenge, others: List<Challenge>) {
-        if (c.book.title.isBlank()) throw RuleViolation("اكتب عنوان الكتاب المشترك.")
-        if (c.book.title.length > Limits.MAX_TITLE) throw RuleViolation("عنوان الكتاب طويل جداً.")
+        if (c.book.title.isBlank()) throw RuleViolation("اكتب عنوان الكتاب.")
+        if (c.book.title.length > Limits.MAX_TITLE || c.book.author.length > Limits.MAX_TITLE) throw RuleViolation("العنوان طويل جداً.")
         if (c.end.isBefore(c.start)) throw RuleViolation("تاريخ النهاية قبل تاريخ البداية.")
-        if (!c.rules.isValid()) throw RuleViolation("قيم نظام النقاط يجب أن تكون بين 0 و10000.")
-        if (c.graceDays !in 0..30) throw RuleViolation("مهلة السماح بين 0 و30 يوماً.")
+        if (c.lengthDays > 366) throw RuleViolation("مدة التحدي أطول من سنة.")
         val clash = others.firstOrNull { it.id != c.id && !(c.end.isBefore(it.start) || c.start.isAfter(it.end)) }
         if (clash != null) {
-            throw RuleViolation("التواريخ تتداخل مع تحدي «${clash.book.title}» (${Dates.short(clash.start)} – ${Dates.short(clash.end)}).")
+            throw RuleViolation("التواريخ تتداخل مع «${clash.book.title}» (${Dates.short(clash.start)} – ${Dates.short(clash.end)}).")
         }
     }
 
-    fun achievement(a: Achievement, data: MarathonData) {
-        val c = data.challenge(a.challengeId) ?: throw RuleViolation("التحدي غير موجود.")
-        if (!c.acceptsAchievementOn(a.date)) {
-            throw RuleViolation("هذا الإنجاز خارج فترة التحدي ومهلة السماح (${c.graceDays} أيام بعد النهاية).")
-        }
-        val mine = data.achievements.filter { it.memberId == a.memberId && it.id != a.id }
-        when (a.type) {
-            AchievementType.FINISHED_COMMON_BOOK, AchievementType.ATTENDED_DISCUSSION ->
-                if (mine.any { it.challengeId == a.challengeId && it.type == a.type }) {
-                    throw RuleViolation(
-                        if (a.type == AchievementType.FINISHED_COMMON_BOOK) "سُجّل إنهاء الكتاب المشترك لهذا التحدي من قبل."
-                        else "سُجّل حضور جلسة النقاش لهذا التحدي من قبل.",
-                    )
-                }
-            AchievementType.FINISHED_OTHER_BOOK -> {
-                val title = a.bookTitle?.trim().orEmpty()
-                if (title.isEmpty()) throw RuleViolation("اكتب عنوان الكتاب الذي أنهيته.")
-                if (mine.any { it.type == AchievementType.FINISHED_OTHER_BOOK && Text.normalize(it.bookTitle.orEmpty()) == Text.normalize(title) }) {
-                    throw RuleViolation("سُجّل إنهاء «$title» من قبل.")
-                }
-            }
-        }
+    fun finish(c: Challenge, date: LocalDate) {
+        if (date.isBefore(c.start)) throw RuleViolation("لم يبدأ هذا التحدي بعد.")
+        if (!c.acceptsFinishOn(date)) throw RuleViolation("انتهت مهلة تسجيل إنهاء هذا الكتاب.")
     }
-}
-
-object Text {
-    /** Arabic-aware comparison key: trims, folds alef/yaa/taa-marbuta variants, drops tashkeel and tatweel. */
-    fun normalize(s: String): String = s.trim()
-        .replace(Regex("[\\u064B-\\u0652\\u0670\\u0640]"), "")
-        .replace(Regex("[إأآٱ]"), "ا")
-        .replace('ى', 'ي')
-        .replace('ة', 'ه')
-        .replace(Regex("\\s+"), " ")
-        .lowercase()
 }

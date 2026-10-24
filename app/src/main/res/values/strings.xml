@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">ماراثون القراءة</string>
     <string name="reminder_channel">تذكير القراءة اليومي</string>
+    <string name="timer_channel">مؤقت القراءة</string>
 </resources>

@@ -5,6 +5,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,65 +57,6 @@ private fun rememberReveal(key: Any?): Float {
     return a.value
 }
 
-/** Area chart (e.g. cumulative hours). Values ordered oldest → newest; drawn newest on the left. */
-@Composable
-fun AreaChart(values: List<Double>, modifier: Modifier = Modifier, height: Dp = 150.dp, color: Color = Brand.colors.gold) {
-    val reveal = rememberReveal(values)
-    val line = MaterialTheme.colorScheme.outlineVariant
-    Canvas(modifier.fillMaxWidth().height(height)) {
-        if (values.size < 2) return@Canvas
-        val max = (values.maxOrNull() ?: 0.0).coerceAtLeast(1e-6)
-        for (g in 1..3) {
-            val y = size.height * g / 4f
-            drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
-        }
-        val n = values.size
-        fun x(i: Int) = size.width - size.width * i / (n - 1f)
-        fun y(v: Double) = size.height - (size.height * (v / max) * reveal).toFloat()
-        val p = Path().apply {
-            moveTo(x(0), y(values[0]))
-            for (i in 1 until n) lineTo(x(i), y(values[i]))
-        }
-        val fill = Path().apply {
-            addPath(p)
-            lineTo(x(n - 1), size.height)
-            lineTo(x(0), size.height)
-            close()
-        }
-        drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = 0.35f), color.copy(alpha = 0.02f))))
-        drawPath(p, color, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
-        drawCircle(color, 4.dp.toPx(), Offset(x(n - 1), y(values[n - 1])))
-    }
-}
-
-/** Vertical bars with labels under them. Order given is right-to-left on screen. */
-@Composable
-fun BarChart(bars: List<Pair<String, Double>>, modifier: Modifier = Modifier, height: Dp = 150.dp, color: Color = MaterialTheme.colorScheme.primary, valueSuffix: String = "") {
-    val reveal = rememberReveal(bars)
-    val max = (bars.maxOfOrNull { it.second } ?: 0.0).coerceAtLeast(1e-6)
-    Row(modifier.fillMaxWidth().height(height + 40.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
-        bars.forEach { (label, v) ->
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    if (v == 0.0) "" else "${Math.round(v)}$valueSuffix",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(4.dp))
-                Box(
-                    Modifier
-                        .fillMaxWidth(0.72f)
-                        .height((height.value * (v / max) * reveal).toFloat().coerceAtLeast(2f).dp)
-                        .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 2.dp, bottomEnd = 2.dp))
-                        .background(if (v == max) Brand.colors.gold else color.copy(alpha = 0.85f)),
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, textAlign = TextAlign.Center)
-            }
-        }
-    }
-}
-
 /** Thin daily columns (rhythm). Newest on the left. */
 @Composable
 fun RhythmChart(values: List<Int>, modifier: Modifier = Modifier, height: Dp = 110.dp) {
@@ -136,69 +78,6 @@ fun RhythmChart(values: List<Int>, modifier: Modifier = Modifier, height: Dp = 1
                 size = Size(w, h),
                 cornerRadius = CornerRadius(w / 2, w / 2),
             )
-        }
-    }
-}
-
-/** Donut with a legend. */
-@Composable
-fun DonutChart(slices: List<Pair<String, Double>>, modifier: Modifier = Modifier, centerTop: String = "", centerBottom: String = "") {
-    val colors = Brand.colors.chart
-    val reveal = rememberReveal(slices)
-    val total = slices.sumOf { it.second }.coerceAtLeast(1e-6)
-    val track = MaterialTheme.colorScheme.surfaceContainerHigh
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(132.dp)) {
-                val stroke = 18.dp.toPx()
-                val d = size.minDimension - stroke
-                val tl = Offset((size.width - d) / 2, (size.height - d) / 2)
-                drawArc(track, 0f, 360f, false, tl, Size(d, d), style = Stroke(stroke))
-                var start = -90f
-                slices.forEachIndexed { i, (_, v) ->
-                    val sweep = (360f * (v / total).toFloat()) * reveal
-                    drawArc(colors[i % colors.size], start, (sweep - 2f).coerceAtLeast(0f), false, tl, Size(d, d), style = Stroke(stroke, cap = StrokeCap.Butt))
-                    start += sweep
-                }
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(centerTop, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                if (centerBottom.isNotEmpty()) Text(centerBottom, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            slices.forEachIndexed { i, (label, v) ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(10.dp).clip(CircleShape).background(colors[i % colors.size]))
-                    Spacer(Modifier.width(8.dp))
-                    Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
-                    Text("${Math.round(v / total * 100)}%", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-    }
-}
-
-/** Horizontal ranking bars (name, value). */
-@Composable
-fun RankBars(rows: List<Pair<String, Double>>, format: (Double) -> String, modifier: Modifier = Modifier) {
-    val reveal = rememberReveal(rows)
-    val max = (rows.maxOfOrNull { it.second } ?: 0.0).coerceAtLeast(1e-6)
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        rows.forEachIndexed { i, (name, v) ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(78.dp), maxLines = 1)
-                Box(Modifier.weight(1f).height(14.dp).clip(RoundedCornerShape(7.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
-                    Box(
-                        Modifier.fillMaxWidth((v / max * reveal).toFloat().coerceIn(0.02f, 1f)).height(14.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(if (i == 0) Brand.colors.gold else MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)),
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(format(v), style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(56.dp), textAlign = TextAlign.End)
-            }
         }
     }
 }
@@ -286,5 +165,53 @@ fun ProgressRing(fraction: Float, modifier: Modifier = Modifier, size: Dp = 92.d
             drawArc(gold, -90f, -360f * fraction.coerceIn(0f, 1f) * reveal, false, tl, Size(d, d), style = Stroke(s, cap = StrokeCap.Round))
         }
         content()
+    }
+}
+
+/**
+ * The last seven days as bars, newest on the left (RTL), each tappable to edit that day.
+ * A thin gold line marks the daily goal.
+ */
+@Composable
+fun WeekBars(days: List<Pair<LocalDate, Int>>, goal: Int, today: LocalDate, onDay: (LocalDate) -> Unit, modifier: Modifier = Modifier) {
+    val reveal = rememberReveal(days)
+    val max = maxOf(days.maxOfOrNull { it.second } ?: 0, goal, 1)
+    val gold = Brand.colors.gold
+    val ink = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.surfaceContainerHigh
+    val barH = 86.dp
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        days.forEach { (date, minutes) ->
+            Column(
+                Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable { onDay(date) }.padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    if (minutes > 0) "$minutes" else "",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                )
+                Spacer(Modifier.height(2.dp))
+                Canvas(Modifier.fillMaxWidth(0.62f).height(barH)) {
+                    val w = size.width
+                    drawRoundRect(track, size = Size(w, size.height), cornerRadius = CornerRadius(w / 2, w / 2))
+                    val h = size.height * (minutes.toFloat() / max) * reveal
+                    if (h > 0f) {
+                        drawRoundRect(
+                            if (minutes >= goal) gold else ink.copy(alpha = 0.8f),
+                            topLeft = Offset(0f, size.height - h), size = Size(w, h), cornerRadius = CornerRadius(w / 2, w / 2),
+                        )
+                    }
+                    val gy = size.height - size.height * goal / max
+                    drawLine(gold.copy(alpha = 0.7f), Offset(-w * 0.25f, gy), Offset(w * 1.25f, gy), strokeWidth = 1.dp.toPx())
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    Dates.weekdayLetter(date),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (date == today) FontWeight.Bold else FontWeight.Normal,
+                    color = if (date == today) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }

@@ -10,79 +10,81 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.readingmarathon.app.AppViewModel
-import com.readingmarathon.app.ui.admin.PlatformAdminScreen
 import com.readingmarathon.app.ui.screens.LoadingScreen
-import com.readingmarathon.app.ui.screens.MainScreen
-import com.readingmarathon.app.ui.screens.MarathonsScreen
-import com.readingmarathon.app.ui.screens.PickMemberScreen
+import com.readingmarathon.app.ui.screens.NameScreen
+import com.readingmarathon.app.ui.screens.Shell
 import com.readingmarathon.app.ui.screens.SignInScreen
 import com.readingmarathon.app.ui.screens.Splash
 import com.readingmarathon.app.ui.theme.MarathonTheme
+import kotlinx.coroutines.launch
 
-/** Snackbar host shared by every screen. */
-val LocalSnackbar = androidx.compose.runtime.staticCompositionLocalOf { SnackbarHostState() }
+/** The view model, for every screen. */
+val LocalVm = staticCompositionLocalOf<AppViewModel> { error("no view model") }
 
 @Composable
 fun MarathonRoot(vm: AppViewModel) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val booted by vm.booted.collectAsStateWithLifecycle()
+    val restoring by vm.restoring.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
-    val adminPanel by vm.adminPanel.collectAsStateWithLifecycle()
-    val session by vm.session.collectAsStateWithLifecycle()
-    val data by vm.data.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
-        vm.messages.collect { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar(it) }
+        vm.messages.collect { m ->
+            snackbar.currentSnackbarData?.dismiss()
+            launch {
+                val r = snackbar.showSnackbar(m.text, m.actionLabel, duration = if (m.action != null) SnackbarDuration.Long else SnackbarDuration.Short)
+                if (r == SnackbarResult.ActionPerformed) m.action?.invoke()
+            }
+        }
     }
 
     MarathonTheme(settings.theme) {
         // The app is written in Arabic: always right-to-left, whatever the phone's language.
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl, LocalSnackbar provides snackbar) {
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl, LocalVm provides vm) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 val stage = when {
-                    !booted -> Stage.SPLASH
+                    restoring -> Stage.SPLASH
                     account == null -> Stage.SIGN_IN
-                    session == null && adminPanel -> Stage.ADMIN
-                    session == null -> Stage.MARATHONS
-                    data == null -> Stage.LOADING
-                    session?.isOrganizer == false && session?.myMemberId == null -> Stage.PICK_MEMBER
-                    else -> Stage.MAIN
+                    profile == null -> Stage.LOADING
+                    profile?.name.isNullOrBlank() -> Stage.NAME
+                    else -> Stage.APP
                 }
                 AnimatedContent(stage, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "stage") { s ->
                     when (s) {
                         Stage.SPLASH -> Splash()
-                        Stage.SIGN_IN -> SignInScreen(vm)
-                        Stage.ADMIN -> PlatformAdminScreen(vm)
-                        Stage.MARATHONS -> MarathonsScreen(vm)
-                        Stage.LOADING -> LoadingScreen(vm)
-                        Stage.PICK_MEMBER -> PickMemberScreen(vm)
-                        Stage.MAIN -> MainScreen(vm)
+                        Stage.SIGN_IN -> SignInScreen()
+                        Stage.LOADING -> LoadingScreen()
+                        Stage.NAME -> NameScreen()
+                        Stage.APP -> Shell()
                     }
                 }
                 SnackbarHost(
                     snackbar,
                     Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding()
-                        .padding(bottom = if (stage == Stage.MAIN) 84.dp else 12.dp),
+                        .padding(bottom = if (stage == Stage.APP) 76.dp else 12.dp),
                 )
             }
         }
     }
 }
 
-private enum class Stage { SPLASH, SIGN_IN, ADMIN, MARATHONS, LOADING, PICK_MEMBER, MAIN }
+private enum class Stage { SPLASH, SIGN_IN, LOADING, NAME, APP }
