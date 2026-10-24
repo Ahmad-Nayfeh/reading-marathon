@@ -304,6 +304,7 @@ private fun Ranking(d: GroupData, c: Challenge?, uid: String, today: LocalDate) 
                     Text(
                         buildString {
                             append(Fmt.duration(s.score.minutes))
+                            if (d.group.rules.countAll && s.score.sharedMinutes > 0 && scope is Scope.OfChallenge) append(" (منها ${Fmt.duration(s.score.sharedMinutes)} في الكتاب)")
                             append(" · ${Fmt.days(s.score.readingDays)}")
                             if (s.score.finishes > 0) append(if (scope is Scope.OfChallenge) " · أتمّ الكتاب" else " · ${Fmt.books(s.score.finishes)}")
                         },
@@ -319,7 +320,8 @@ private fun Ranking(d: GroupData, c: Challenge?, uid: String, today: LocalDate) 
     }
     Spacer(Modifier.height(8.dp))
     Text(
-        "كل ${Fmt.minutes(d.group.rules.minutesPerPoint)} قراءة = نقطة، وإتمام الكتاب = ${Fmt.points(d.group.rules.finishBonus)}.",
+        (if (d.group.rules.countAll) "كل ${Fmt.minutes(d.group.rules.minutesPerPoint)} قراءة في أي كتاب = نقطة" else "كل ${Fmt.minutes(d.group.rules.minutesPerPoint)} في الكتاب المشترك = نقطة") +
+            "، وإتمام الكتاب = ${Fmt.points(d.group.rules.finishBonus)}.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(12.dp))

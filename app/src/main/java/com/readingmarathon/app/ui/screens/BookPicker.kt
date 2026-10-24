@@ -45,6 +45,7 @@ import com.readingmarathon.app.ui.components.PrimaryButton
 import com.readingmarathon.app.ui.components.Tag
 import com.readingmarathon.app.ui.theme.Brand
 import com.readingmarathon.core.BookStatus
+import com.readingmarathon.core.Catalog
 import com.readingmarathon.core.CatalogBook
 import com.readingmarathon.core.Limits
 import kotlinx.coroutines.delay
@@ -79,55 +80,96 @@ fun BookPicker(selected: CatalogBook?, onSelect: (CatalogBook?) -> Unit, exclude
         NewBookForm(query, onCancel = { adding = false }) { onSelect(it); adding = false }
         return
     }
-    BookSearch(query, { query = it }, excludeId = excludeId, onPick = onSelect)
-    Spacer(Modifier.height(10.dp))
-    TextButton(onClick = { adding = true }) { Text("لم أجد الكتاب؟ أضفه إلى الفهرس") }
+    BookSearch(query, { query = it }, excludeId = excludeId, onManual = { adding = true }, onPick = onSelect)
 }
 
-/** A search box over the catalog with the matches under it. */
+/**
+ * A search box over the catalog. When the catalog has little for the query, Google Books results
+ * appear under it too, and one tap adds such a book to the catalog and picks it.
+ */
 @Composable
-fun BookSearch(query: String, onQuery: (String) -> Unit, excludeId: String? = null, onPick: (CatalogBook) -> Unit) {
+fun BookSearch(query: String, onQuery: (String) -> Unit, excludeId: String? = null, onManual: ((FoundBook?) -> Unit)? = null, onPick: (CatalogBook) -> Unit) {
     val vm = LocalVm.current
     var results by remember { mutableStateOf<List<CatalogBook>?>(null) }
+    var google by remember { mutableStateOf<List<FoundBook>>(emptyList()) }
+    var searchingGoogle by remember { mutableStateOf(false) }
     LaunchedEffect(query) {
+        google = emptyList()
         if (query.trim().length < 2) { results = null; return@LaunchedEffect }
-        delay(300)
-        results = runCatching { vm.backend.searchBooks(query) }.getOrDefault(emptyList()).filter { it.id != excludeId }
+        delay(350)
+        val mine = runCatching { vm.backend.searchBooks(query) }.getOrDefault(emptyList()).filter { it.id != excludeId }
+        results = mine
+        if (query.trim().length >= 3 && mine.size < 5) {
+            searchingGoogle = true
+            google = runCatching { GoogleBooks.search(query) }.getOrDefault(emptyList())
+                .filter { f -> f.author.isNotBlank() && Catalog.findSame(f.title, f.author, mine) == null }
+                .take(8)
+            searchingGoogle = false
+        }
     }
     OutlinedTextField(
         query, { onQuery(it.take(Limits.MAX_TITLE)) },
         leadingIcon = { Icon(Icons.Rounded.Search, null) },
-        label = { Text("ابحث بالعنوان أو المؤلف") },
+        label = { Text("اسم الكتاب أو المؤلف") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
     )
     val list = results ?: return
     Spacer(Modifier.height(8.dp))
-    if (list.isEmpty()) {
-        Text("لا نتائج في الفهرس.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(4.dp))
-        return
-    }
-    PaperCard(padding = PaddingValues(vertical = 4.dp)) {
-        list.forEachIndexed { i, b ->
-            if (i > 0) ListDivider()
-            Row(Modifier.fillMaxWidth().clickable { onPick(b) }.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("«${b.title}»", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(b.author, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (b.aliases.isNotEmpty()) {
-                        Text("ويُعرف بـ: " + b.aliases.take(2).joinToString("، "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    if (list.isNotEmpty()) {
+        PaperCard(padding = PaddingValues(vertical = 4.dp)) {
+            list.forEachIndexed { i, b ->
+                if (i > 0) ListDivider()
+                Row(Modifier.fillMaxWidth().clickable { onPick(b) }.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("«${b.title}»", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(b.author, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (b.aliases.isNotEmpty()) {
+                            Text("ويُعرف بـ: " + b.aliases.take(2).joinToString("، "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
+                    if (b.status == BookStatus.PENDING) Tag("جديد")
                 }
-                if (b.status == BookStatus.PENDING) Tag("بانتظار المراجعة")
             }
         }
+    }
+    if (searchingGoogle) {
+        Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Brand.colors.gold) }
+    }
+    if (google.isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        Text("كتب أخرى بهذا الاسم", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        PaperCard(padding = PaddingValues(vertical = 4.dp)) {
+            google.forEachIndexed { i, f ->
+                if (i > 0) ListDivider()
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        var added: CatalogBook? = null
+                        vm.run(then = { added?.let(onPick) }) { added = vm.backend.proposeBook(f.title.take(Limits.MAX_TITLE), f.author.take(Limits.MAX_TITLE), f.pages) }
+                    }.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("«${f.title}»", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(f.author + (f.pages?.let { " · $it صفحة" } ?: ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+    }
+    if (list.isEmpty() && google.isEmpty() && !searchingGoogle) {
+        Text("لم أجد كتاباً بهذا الاسم.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(4.dp))
+    }
+    if (onManual != null && query.trim().length >= 2) {
+        TextButton(onClick = { onManual(null) }) { Text("ليس هنا؟ اكتب بياناته بنفسك") }
     }
 }
 
 /** Add a book the catalog doesn't have. Google Books can fill the fields, but the reader confirms them. */
 @Composable
-private fun NewBookForm(initial: String, onCancel: () -> Unit, onAdded: (CatalogBook) -> Unit) {
+internal fun NewBookForm(initial: String, onCancel: () -> Unit, onAdded: (CatalogBook) -> Unit) {
     val vm = LocalVm.current
     var title by rememberSaveable { mutableStateOf(initial) }
     var author by rememberSaveable { mutableStateOf("") }

@@ -22,6 +22,9 @@ import com.readingmarathon.core.Suggestion
 import com.readingmarathon.core.SuggestionType
 import com.readingmarathon.core.Challenge
 import com.readingmarathon.core.Day
+import com.readingmarathon.core.Read
+import com.readingmarathon.core.ShelfBook
+import com.readingmarathon.core.ShelfStatus
 import com.readingmarathon.core.Entry
 import com.readingmarathon.core.Finish
 import com.readingmarathon.core.Group
@@ -89,7 +92,19 @@ class ScreensTest {
         backend.seed(d)
         backend.seed(GroupData(Group("g_family", "قراءة العائلة", visibility = Visibility.PRIVATE, inviteCode = "FAM234", roles = mapOf("u_sara" to Role.MEMBER, "u_dad" to Role.OWNER)), listOf(Member("u_sara", "سارة", "u_sara"), Member("u_dad", "أبي", "u_dad"))))
         backend.seed(GroupData(Group("g_public", "قرّاء الرياض", "مجموعة مفتوحة لكل من يحب القراءة في الرياض.", Visibility.PUBLIC, "RYD456", mapOf("u_x" to Role.OWNER, "u_y" to Role.MEMBER, "u_z" to Role.MEMBER))))
-        backend.logs["u_sara"] = d.entries.filter { it.memberId == "u_sara" }.associate { it.date to Day(it.date, it.minutes) }.toMutableMap()
+        // Sara reads the club's book and one of her own; her log matches the group's entries.
+        val saraDays = d.entries.filter { it.memberId == "u_sara" }
+        backend.logs["u_sara"] = saraDays.associate { it.date to Day(it.date, it.minutes) }.toMutableMap()
+        backend.readsBy["u_sara"] = saraDays.flatMap { e ->
+            val mine = e.minutes / 3
+            listOf(Read(e.date, "b_ayyam", e.minutes - mine), Read(e.date, "b_rijal", mine)).filter { it.minutes > 0 }
+        }.associateBy { it.id }.toMutableMap()
+        backend.shelves["u_sara"] = linkedMapOf(
+            "b_ayyam" to ShelfBook("b_ayyam", "الأيام", "طه حسين", minutes = 520, startedAt = 2, lastReadAt = 3),
+            "b_rijal" to ShelfBook("b_rijal", "رجال في الشمس", "غسان كنفاني", minutes = 160, startedAt = 1, lastReadAt = 2),
+            "b_mawsim" to ShelfBook("b_mawsim", "موسم الهجرة إلى الشمال", "الطيب صالح", ShelfStatus.FINISHED, minutes = 610, finishedAt = System.currentTimeMillis() - 86_400_000L * 20),
+            "b_granada" to ShelfBook("b_granada", "ثلاثية غرناطة", "رضوى عاشور", ShelfStatus.WANT),
+        )
         listOf(
             CatalogBook("b_ayyam", "الأيام", "طه حسين", aliases = listOf("أيام طه حسين")),
             CatalogBook("b_granada", "ثلاثية غرناطة", "رضوى عاشور", aliases = listOf("غرناطة")),
@@ -139,14 +154,14 @@ class ScreensTest {
         waitFor("مجموعاتي")
         shot("02-home")
         tap("\u2066+30\u2069")
-        assertEquals(30, backend.logs.getValue("u_sara")[today]?.minutes)
-        assertTrue(backend.all.getValue("g_club").entries.any { it.memberId == "u_sara" && it.date == today && it.minutes == 30 })
+        assertEquals(30, backend.readsBy.getValue("u_sara")[Read.readId(today, "b_ayyam")]?.minutes)
+        assertTrue(backend.all.getValue("g_club").entries.any { it.memberId == "u_sara" && it.date == today && it.minutes == 30 && it.sharedMinutes == 30 })
         shot("03-home-logged")
-        tap("تعديل")
-        waitFor("قراءة يوم")
+        tap("وقت آخر")
+        waitFor("تسجيل قراءة")
         shot("04-day-sheet")
         tap("حفظ اليوم")
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("قراءة يوم").fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("تسجيل قراءة").fetchSemanticsNodes().isEmpty() }
         compose.mainClock.advanceTimeBy(12_000) // let the snackbar go
         tap("نادي كتاب الحي")
         waitFor("نقرأ الآن")
@@ -166,7 +181,14 @@ class ScreensTest {
     fun tabs() {
         backend.signIn(sara)
         waitFor("مجموعاتي")
-        tap("المجموعات", index = 0)
+        tap("رفّي")
+        waitFor("أتممتها")
+        shot("09b-shelf")
+        tap("«رجال في الشمس»")
+        waitFor("وقتك فيه")
+        shot("09c-shelf-book")
+        tap("لاحقاً")
+        tap("المجموعات")
         waitFor("مجموعات عامة")
         shot("10-groups")
         tap("أنا")
@@ -189,14 +211,33 @@ class ScreensTest {
         waitFor("نقرأ الآن")
         tap("الكتب")
         tap("كتاب جديد")
-        waitFor("ابحث بالعنوان")
+        waitFor("اسم الكتاب أو المؤلف")
         compose.onAllNodes(hasSetTextAction())[0].performTextInput("كنفاني")
         compose.mainClock.advanceTimeBy(1_000)
         waitFor("رجال في الشمس")
         shot("15-book-picker")
-        tap("لم أجد الكتاب؟ أضفه إلى الفهرس")
+        tap("ليس هنا؟ اكتب بياناته بنفسك")
         waitFor("كتاب جديد في الفهرس")
         shot("16-new-book")
+    }
+
+    @Test
+    fun firstBook() {
+        backend.profiles["u_new"] = Profile("أمجد")
+        backend.signIn(Account("u_new", null, null, isGuest = true))
+        waitFor("ماذا تقرأ الآن؟")
+        shot("40-first-home")
+        tap("اختر كتاباً")
+        waitFor("اسم الكتاب أو المؤلف")
+        compose.onAllNodes(hasSetTextAction())[0].performTextInput("الأيام")
+        compose.mainClock.advanceTimeBy(1_000)
+        waitFor("طه حسين")
+        shot("41-add-book")
+        tap("«الأيام»")
+        waitFor("«الأيام»")
+        compose.waitUntil(10_000) { backend.shelves["u_new"]?.containsKey("b_ayyam") == true }
+        waitFor("مؤقت")
+        shot("42-first-book-home")
     }
 
     @Test

@@ -5,10 +5,14 @@ import java.time.LocalDate
 /** A member's totals within a scope. */
 data class MemberScore(
     val member: Member,
+    /** Minutes that count for points: all reading, or the shared book only (group setting). */
     val minutes: Int,
     val readingDays: Int,
     val finishes: Int,
     val points: Int,
+    /** Minutes on the shared book, shown next to the total. */
+    val sharedMinutes: Int = 0,
+    val allMinutes: Int = minutes,
 ) {
     val hours: Double get() = minutes / 60.0
 }
@@ -37,15 +41,19 @@ object Scoring {
 
     fun memberScore(data: GroupData, member: Member, scope: Scope): MemberScore {
         val entries = entriesIn(data, scope).filter { it.memberId == member.id }
-        val minutes = entries.sumOf { it.minutes }
-        val finishes = finishesIn(data, scope).count { it.memberId == member.id }
         val rules = data.group.rules
+        val all = entries.sumOf { it.minutes }
+        val shared = entries.sumOf { it.sharedMinutes.coerceAtMost(it.minutes) }
+        val minutes = if (rules.countAll) all else shared
+        val finishes = finishesIn(data, scope).count { it.memberId == member.id }
         return MemberScore(
             member = member,
             minutes = minutes,
-            readingDays = entries.count { it.minutes > 0 },
+            readingDays = entries.count { (if (rules.countAll) it.minutes else it.sharedMinutes) > 0 },
             finishes = finishes,
             points = minutes / rules.minutesPerPoint.coerceAtLeast(1) + finishes * rules.finishBonus,
+            sharedMinutes = shared,
+            allMinutes = all,
         )
     }
 

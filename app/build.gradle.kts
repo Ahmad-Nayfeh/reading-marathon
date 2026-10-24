@@ -48,7 +48,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (findProperty("marathon.versionCode") as String?)?.toInt() ?: 1
-        versionName = (findProperty("marathon.versionName") as String?) ?: "1.0.0"
+        versionName = (findProperty("marathon.versionName") as String?) ?: "0.1.0"
         buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
         vectorDrawables { useSupportLibrary = true }
     }

@@ -100,3 +100,29 @@ object Stats {
         return data.entries.filter { it.memberId in active }.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { it.minutes } }
     }
 }
+
+object Shelf {
+    /** Day totals from per-book reads. */
+    fun dayTotals(reads: List<Read>): List<Day> =
+        reads.groupBy { it.date }.map { (d, rs) -> Day(d, rs.sumOf { it.minutes }, rs.maxOf { it.updatedAt }) }
+
+    /**
+     * What a member's day looks like inside a group: the total, and the minutes on the book the
+     * group was reading that day (the challenge whose dates include it).
+     */
+    fun groupEntry(memberId: String, date: java.time.LocalDate, reads: List<Read>, challenges: List<Challenge>, now: Long): Entry {
+        val day = reads.filter { it.date == date }
+        val sharedId = challenges.firstOrNull { it.contains(date) }?.bookId
+        return Entry(
+            memberId = memberId,
+            date = date,
+            minutes = day.sumOf { it.minutes }.coerceAtMost(Limits.MAX_MINUTES_PER_DAY),
+            updatedAt = now,
+            sharedMinutes = if (sharedId == null) 0 else day.filter { it.bookId == sharedId }.sumOf { it.minutes },
+        )
+    }
+
+    /** Books to show first: being read, most recently read first. */
+    fun reading(shelf: List<ShelfBook>): List<ShelfBook> =
+        shelf.filter { it.status == ShelfStatus.READING }.sortedByDescending { maxOf(it.lastReadAt, it.startedAt) }
+}

@@ -11,6 +11,7 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.gms.tasks.Task
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
@@ -25,6 +26,10 @@ import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.WriteBatch
 import com.readingmarathon.core.BookBrief
 import com.readingmarathon.core.Challenge
+import com.readingmarathon.core.ShelfStatus
+import com.readingmarathon.core.ShelfBook
+import com.readingmarathon.core.Shelf
+import com.readingmarathon.core.Read
 import com.readingmarathon.core.Text
 import com.readingmarathon.core.SuggestionType
 import com.readingmarathon.core.SuggestionStatus
@@ -68,6 +73,12 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
     override val profile: StateFlow<Profile?> = _profile
     private val _days = MutableStateFlow<List<Day>>(emptyList())
     override val days: StateFlow<List<Day>> = _days
+    private val _reads = MutableStateFlow<List<Read>>(emptyList())
+    override val reads: StateFlow<List<Read>> = _reads
+    private val _shelf = MutableStateFlow<List<ShelfBook>>(emptyList())
+    override val shelf: StateFlow<List<ShelfBook>> = _shelf
+    private var readsLoaded = false
+    private var shelfLoaded = false
     private val _groups = MutableStateFlow<Map<String, GroupData>>(emptyMap())
     override val groups: StateFlow<Map<String, GroupData>> = _groups
 
@@ -115,6 +126,10 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         peeked.clear()
         _profile.value = null
         _days.value = emptyList()
+        _reads.value = emptyList()
+        _shelf.value = emptyList()
+        readsLoaded = false
+        shelfLoaded = false
         _groups.value = emptyMap()
         _announcements.value = emptyList()
         _banned.value = false
@@ -138,6 +153,16 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
                 if (err != null) { Log.w(TAG, "days", err); return@addSnapshotListener }
                 if (s != null) _days.value = s.documents.mapNotNull { d -> runCatching { Docs.day(d.data.orEmpty()) }.getOrNull() }
             }
+        userListeners += me.collection("reads")
+            .whereGreaterThanOrEqualTo("date", today().minusDays(Limits.HISTORY_DAYS).toString())
+            .addSnapshotListener { s, err ->
+                if (err != null) { Log.w(TAG, "reads", err); return@addSnapshotListener }
+                if (s != null) { _reads.value = s.documents.mapNotNull { d -> runCatching { Docs.read(d.data.orEmpty()) }.getOrNull() }; readsLoaded = true }
+            }
+        userListeners += me.collection("shelf").addSnapshotListener { s, err ->
+            if (err != null) { Log.w(TAG, "shelf", err); return@addSnapshotListener }
+            if (s != null) { _shelf.value = s.documents.map { Docs.shelf(it.id, it.data.orEmpty()) }; shelfLoaded = true; autoShelve() }
+        }
         userListeners += db.collection("banned").document(uid).addSnapshotListener { snap, _ ->
             if (snap != null && !snap.metadata.isFromCache) _banned.value = snap.exists()
         }
@@ -222,6 +247,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         private fun publish() {
             val d = GroupData(group ?: return, members ?: return, challenges ?: return, entries ?: return, finishes ?: return)
             if (id in watchers) _groups.value = _groups.value + (id to d)
+            autoShelve()
         }
 
         fun stop() {
@@ -314,29 +340,111 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
 
     // ---- The reader's log ----
 
-    override suspend fun setDay(date: LocalDate, minutes: Int) {
-        Validation.day(date, minutes, today())
+    private fun shelfRef(bookId: String) = users().document(uid()).collection("shelf").document(bookId)
+
+    /** The reads of one day, from the live list or (before it has loaded, e.g. from a notification) from the server. */
+    private suspend fun readsOn(date: LocalDate): List<Read> =
+        if (readsLoaded) _reads.value.filter { it.date == date }
+        else runCatching {
+            users().document(uid()).collection("reads").whereEqualTo("date", date.toString()).get().await()
+                .documents.mapNotNull { runCatching { Docs.read(it.data.orEmpty()) }.getOrNull() }
+        }.getOrDefault(emptyList())
+
+    private suspend fun shelfNow(): List<ShelfBook> =
+        if (shelfLoaded) _shelf.value
+        else runCatching { users().document(uid()).collection("shelf").get().await().documents.map { Docs.shelf(it.id, it.data.orEmpty()) } }.getOrDefault(emptyList())
+
+    override suspend fun setRead(date: LocalDate, bookId: String, minutes: Int) {
         val me = uid()
         val now = System.currentTimeMillis()
+        val day = readsOn(date)
+        val before = day.firstOrNull { it.bookId == bookId }?.minutes ?: 0
+        val after = day.filter { it.bookId != bookId } + Read(date, bookId, minutes, now)
+        Validation.day(date, after.sumOf { it.minutes }, today())
+        if (minutes < 0) throw RuleViolation("الدقائق لا تكون سالبة.")
+        val mine = users().document(me)
         // Not awaited: the local cache updates at once and syncs when online.
-        users().document(me).collection("days").document(date.toString())
-            .set(Docs.dayMap(Day(date, minutes, now)))
-            .addOnFailureListener { Log.w(TAG, "day", it) }
+        fun Task<*>.logged(what: String) = addOnFailureListener { Log.w(TAG, what, it) }
+        val readRef = mine.collection("reads").document(Read.readId(date, bookId))
+        (if (minutes == 0) readRef.delete() else readRef.set(Docs.readMap(Read(date, bookId, minutes, now)))).logged("read")
+        val total = after.sumOf { it.minutes }
+        mine.collection("days").document(date.toString()).set(Docs.dayMap(Day(date, total, now))).logged("day")
+        if (minutes != before) {
+            shelfRef(bookId).set(mapOf("minutes" to FieldValue.increment((minutes - before).toLong()), "lastReadAt" to now), SetOptions.merge()).logged("shelf")
+        }
+        val reads = after.filter { it.minutes > 0 }
         for (gid in groupIds()) {
+            val challenges = _groups.value[gid]?.challenges ?: runCatching {
+                groupRef(gid).collection("challenges").get().await().documents.mapNotNull { runCatching { Docs.challenge(it.id, it.data.orEmpty()) }.getOrNull() }
+            }.getOrDefault(emptyList())
+            val e = Shelf.groupEntry(me, date, reads, challenges, now)
             val ref = groupRef(gid).collection("entries").document(Entry.entryId(me, date))
-            val write = if (minutes == 0) ref.delete() else ref.set(Docs.entryMap(Entry(me, date, minutes, now)))
-            write.addOnFailureListener { Log.w(TAG, "entry $gid", it) }
+            (if (e.minutes == 0) ref.delete() else ref.set(Docs.entryMap(e))).logged("entry $gid")
         }
     }
 
-    override suspend fun addMinutes(date: LocalDate, minutes: Int): Int {
-        val current = _days.value.firstOrNull { it.date == date }?.minutes
-            ?: runCatching {
-                (users().document(uid()).collection("days").document(date.toString()).get().await().getLong("minutes") ?: 0).toInt()
-            }.getOrDefault(0)
-        val total = (current + minutes).coerceIn(0, Limits.MAX_MINUTES_PER_DAY)
-        setDay(date, total)
-        return total
+    override suspend fun addRead(date: LocalDate, bookId: String?, minutes: Int): Pair<ShelfBook, Int> {
+        val shelf = shelfNow()
+        val book = (if (bookId != null) shelf.firstOrNull { it.bookId == bookId } else Shelf.reading(shelf).firstOrNull())
+            ?: throw RuleViolation("اختر الكتاب الذي تقرؤه أولاً.")
+        val current = readsOn(date).firstOrNull { it.bookId == book.bookId }?.minutes ?: 0
+        val dayTotal = readsOn(date).sumOf { it.minutes }
+        val add = minutes.coerceAtMost(Limits.MAX_MINUTES_PER_DAY - dayTotal)
+        if (add <= 0) throw RuleViolation("وصلت إلى 16 ساعة في هذا اليوم.")
+        setRead(date, book.bookId, current + add)
+        return book to current + add
+    }
+
+    override suspend fun shelve(book: CatalogBook, status: ShelfStatus) {
+        val now = System.currentTimeMillis()
+        val existing = shelfNow().firstOrNull { it.bookId == book.id }
+        val fields = mutableMapOf<String, Any>("title" to book.title, "author" to book.author, "status" to status.name.lowercase())
+        if (existing == null) { fields["startedAt"] = now; fields["minutes"] = 0; fields["lastReadAt"] = 0L; fields["finishedAt"] = 0L }
+        shelfRef(book.id).set(fields, SetOptions.merge()).await()
+        if (status == ShelfStatus.FINISHED) setShelfStatus(book.id, ShelfStatus.FINISHED)
+    }
+
+    override suspend fun setShelfStatus(bookId: String, status: ShelfStatus) {
+        val me = uid()
+        val today = today()
+        shelfRef(bookId).set(
+            mapOf("status" to status.name.lowercase(), "finishedAt" to if (status == ShelfStatus.FINISHED) System.currentTimeMillis() else 0L),
+            SetOptions.merge(),
+        ).await()
+        // Finishing (or un-finishing) a book counts in every group reading it as its shared book.
+        for (d in _groups.value.values) {
+            if (d.member(me)?.active != true) continue
+            val c = d.challenges.firstOrNull { it.bookId == bookId && it.acceptsFinishOn(today) } ?: continue
+            val ref = groupRef(d.group.id).collection("finishes").document(Finish.finishId(me, c.id))
+            runCatching {
+                if (status == ShelfStatus.FINISHED) { if (d.finished(me, c.id) == null) ref.set(Docs.finishMap(Finish(me, c.id, today))).await() }
+                else if (d.finished(me, c.id) != null) ref.delete().await()
+            }.onFailure { Log.w(TAG, "finish", it) }
+        }
+    }
+
+    override suspend fun removeFromShelf(bookId: String) {
+        shelfRef(bookId).delete().await()
+    }
+
+    /** The book a group is reading now goes on each member's shelf by itself. */
+    private val autoShelved = HashSet<String>()
+    private fun autoShelve() {
+        val me = uidLoaded ?: return
+        if (!shelfLoaded) return
+        val have = _shelf.value.map { it.bookId }.toSet()
+        val today = today()
+        for (d in _groups.value.values) {
+            if (d.member(me)?.active != true) continue
+            val c = d.challenges.firstOrNull { it.status(today) == ChallengeStatus.ACTIVE } ?: continue
+            val bid = c.bookId ?: continue
+            if (bid in have || !autoShelved.add(bid)) continue
+            val now = System.currentTimeMillis()
+            users().document(me).collection("shelf").document(bid).set(
+                mapOf("title" to c.book.title, "author" to c.book.author, "status" to "reading", "minutes" to 0, "startedAt" to now, "lastReadAt" to 0L, "finishedAt" to 0L),
+                SetOptions.merge(),
+            ).addOnFailureListener { Log.w(TAG, "autoShelve", it) }
+        }
     }
 
     private suspend fun groupIds(): List<String> = _profile.value?.groups
@@ -419,11 +527,13 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
             .mapNotNull { runCatching { Docs.challenge(it.id, it.data.orEmpty()) }.getOrNull() }
         val c = challenges.firstOrNull { it.status(today) == ChallengeStatus.ACTIVE } ?: return@runCatching
         val batch = requireDb().batch()
-        val days = _days.value.filter { it.minutes > 0 && c.contains(it.date) && !it.date.isAfter(today) }
-        days.forEach { d ->
-            batch.set(groupRef(groupId).collection("entries").document(Entry.entryId(me, d.date)), Docs.entryMap(Entry(me, d.date, d.minutes, d.updatedAt)))
+        val reads = _reads.value.filter { it.minutes > 0 && c.contains(it.date) && !it.date.isAfter(today) }
+        val now = System.currentTimeMillis()
+        reads.map { it.date }.distinct().forEach { date ->
+            val e = Shelf.groupEntry(me, date, reads, challenges, now)
+            batch.set(groupRef(groupId).collection("entries").document(e.id), Docs.entryMap(e))
         }
-        if (days.isNotEmpty()) batch.commit().await()
+        if (reads.isNotEmpty()) batch.commit().await()
     }.onFailure { Log.w(TAG, "backfill", it) }
 
     override suspend fun leaveGroup(groupId: String) {
@@ -501,6 +611,20 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         } else {
             Validation.finish(c, date)
             ref.set(Docs.finishMap(Finish(memberId, challengeId, date))).await()
+        }
+        // The reader's shelf follows: finished here means finished there.
+        val bid = c.bookId
+        if (memberId == me && bid != null) {
+            runCatching {
+                shelfRef(bid).set(
+                    mapOf(
+                        "title" to c.book.title, "author" to c.book.author,
+                        "status" to if (date == null) "reading" else "finished",
+                        "finishedAt" to if (date == null) 0L else System.currentTimeMillis(),
+                    ),
+                    SetOptions.merge(),
+                ).await()
+            }.onFailure { Log.w(TAG, "shelf finish", it) }
         }
     }
 
@@ -826,6 +950,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         val profile = async { db.collection("users").document(uid).get().await() }
         val days = async { db.collection("users").document(uid).collection("days").get().await() }
         val ban = async { db.collection("banned").document(uid).get().await() }
+        val shelfQ = async { db.collection("users").document(uid).collection("shelf").get().await() }
         val p = profile.await()
         val ds = days.await().documents.mapNotNull { runCatching { Docs.day(it.data.orEmpty()) }.getOrNull() }.sortedByDescending { it.date }
         val gids = (p.get("groups") as? List<*>)?.filterIsInstance<String>().orEmpty()
@@ -835,6 +960,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
             goal = (p.getLong("goal") ?: 30).toInt(),
             days = ds,
             groups = names,
+            shelf = shelfQ.await().documents.map { Docs.shelf(it.id, it.data.orEmpty()) }.sortedByDescending { it.lastReadAt },
             banned = ban.await().exists(),
         )
     }
@@ -865,7 +991,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         val user = db.collection("users").document(uid)
         val gids = (user.get().await().get("groups") as? List<*>)?.filterIsInstance<String>().orEmpty()
         val writes = mutableListOf<(WriteBatch) -> Unit>()
-        user.collection("days").get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+        for (sub in listOf("days", "reads", "shelf")) user.collection(sub).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
         for (gid in gids) {
             val g = groupRef(gid)
             val snap = runCatching { g.get().await() }.getOrNull() ?: continue

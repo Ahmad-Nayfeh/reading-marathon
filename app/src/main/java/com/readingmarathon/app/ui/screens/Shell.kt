@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
+import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
@@ -52,7 +54,7 @@ import com.readingmarathon.app.ui.theme.Brand
 import java.time.LocalDate
 
 /** Navigation for every screen, plus the day editor that any screen can open. */
-class Nav(val controller: NavHostController, private val openDay: (LocalDate) -> Unit) {
+class Nav(val controller: NavHostController, private val openDay: (LocalDate, String?) -> Unit) {
     fun back() { controller.popBackStack() }
     fun group(id: String) = controller.navigate("group/$id")
     fun groupSettings(id: String) = controller.navigate("group/$id/settings")
@@ -61,7 +63,8 @@ class Nav(val controller: NavHostController, private val openDay: (LocalDate) ->
     fun create() = controller.navigate("create")
     fun join(code: String? = null) = controller.navigate("join" + (code?.let { "?code=$it" } ?: ""))
     fun admin() = controller.navigate("admin")
-    fun day(date: LocalDate) = openDay(date)
+    fun day(date: LocalDate, bookId: String? = null) = openDay(date, bookId)
+    fun addBook() = controller.navigate("shelf/add")
 
     /** After leaving or deleting a group: back to the main tabs. */
     fun home() { controller.popBackStack("main", inclusive = false) }
@@ -69,14 +72,14 @@ class Nav(val controller: NavHostController, private val openDay: (LocalDate) ->
 
 val LocalNav = staticCompositionLocalOf<Nav> { error("no nav") }
 
-enum class Tab { HOME, GROUPS, ME }
+enum class Tab { HOME, SHELF, GROUPS, ME }
 
 @Composable
 fun Shell() {
     val vm = LocalVm.current
     val controller = rememberNavController()
-    var editing by remember { mutableStateOf<LocalDate?>(null) }
-    val nav = remember(controller) { Nav(controller) { editing = it } }
+    var editing by remember { mutableStateOf<Pair<LocalDate, String?>?>(null) }
+    val nav = remember(controller) { Nav(controller) { d, b -> editing = d to b } }
     val pending by vm.pendingCode.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
 
@@ -94,6 +97,7 @@ fun Shell() {
                     Box(Modifier.weight(1f)) {
                         when (tab) {
                             Tab.HOME -> HomeScreen(onGroups = { tab = Tab.GROUPS })
+                            Tab.SHELF -> ShelfScreen()
                             Tab.GROUPS -> GroupsScreen()
                             Tab.ME -> MeScreen()
                         }
@@ -114,8 +118,9 @@ fun Shell() {
                 arguments = listOf(navArgument("code") { type = NavType.StringType; nullable = true; defaultValue = null }),
             ) { e -> JoinScreen(e.arguments?.getString("code")) }
             composable("admin") { PlatformAdminScreen() }
+            composable("shelf/add") { AddBookScreen() }
         }
-        editing?.let { date -> DaySheet(date, onDismiss = { editing = null }) }
+        editing?.let { (date, book) -> DaySheet(date, book, onDismiss = { editing = null }) }
     }
 }
 
@@ -125,6 +130,7 @@ private fun BottomBar(tab: Tab, onSelect: (Tab) -> Unit) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(Modifier.fillMaxWidth().height(64.dp)) {
             BarItem("الرئيسية", Icons.Rounded.Home, Icons.Outlined.Home, tab == Tab.HOME) { onSelect(Tab.HOME) }
+            BarItem("رفّي", Icons.AutoMirrored.Rounded.LibraryBooks, Icons.AutoMirrored.Outlined.LibraryBooks, tab == Tab.SHELF) { onSelect(Tab.SHELF) }
             BarItem("المجموعات", Icons.Rounded.Groups, Icons.Outlined.Groups, tab == Tab.GROUPS) { onSelect(Tab.GROUPS) }
             BarItem("أنا", Icons.Rounded.Person, Icons.Outlined.Person, tab == Tab.ME) { onSelect(Tab.ME) }
         }

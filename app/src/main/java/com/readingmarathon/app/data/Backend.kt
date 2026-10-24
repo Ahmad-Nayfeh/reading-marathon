@@ -8,6 +8,9 @@ import com.readingmarathon.core.CsvImport
 import com.readingmarathon.core.Day
 import com.readingmarathon.core.GroupData
 import com.readingmarathon.core.Member
+import com.readingmarathon.core.Read
+import com.readingmarathon.core.ShelfBook
+import com.readingmarathon.core.ShelfStatus
 import com.readingmarathon.core.Role
 import com.readingmarathon.core.Rules
 import com.readingmarathon.core.Suggestion
@@ -104,6 +107,7 @@ data class AdminUserDetail(
     val goal: Int,
     val days: List<Day>,
     val groups: List<Pair<String, String>>,
+    val shelf: List<ShelfBook> = emptyList(),
     val banned: Boolean,
 )
 
@@ -132,11 +136,27 @@ interface Backend {
 
     suspend fun saveProfile(name: String, goal: Int)
 
-    /** Sets the reader's minutes for a day, in their own log and in every group they are in. */
-    suspend fun setDay(date: LocalDate, minutes: Int)
+    /** Minutes per book per day (the last year or so). [days] holds their daily totals. */
+    val reads: StateFlow<List<Read>>
+    /** The reader's own books: reading, finished, want to read. */
+    val shelf: StateFlow<List<ShelfBook>>
 
-    /** Adds minutes to a day, reading the current value first (works before anything is loaded). */
-    suspend fun addMinutes(date: LocalDate, minutes: Int): Int
+    /**
+     * Sets the minutes the reader spent on [bookId] on [date], in their own log and in every group
+     * they are in (each group sees the day's total and its shared-book part).
+     */
+    suspend fun setRead(date: LocalDate, bookId: String, minutes: Int)
+
+    /**
+     * Adds minutes to [bookId] today, or to the book read most recently when null (the notification
+     * buttons). Works before anything is loaded. Returns the book and its minutes today.
+     */
+    suspend fun addRead(date: LocalDate, bookId: String?, minutes: Int): Pair<ShelfBook, Int>
+
+    /** Puts a catalog book on the shelf (or changes its status). Finishing it counts in the groups reading it. */
+    suspend fun shelve(book: CatalogBook, status: ShelfStatus)
+    suspend fun setShelfStatus(bookId: String, status: ShelfStatus)
+    suspend fun removeFromShelf(bookId: String)
 
     suspend fun createGroup(name: String, about: String, visibility: Visibility): String
     suspend fun findByCode(code: String): GroupPreview

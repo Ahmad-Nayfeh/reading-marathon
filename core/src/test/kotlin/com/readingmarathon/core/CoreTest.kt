@@ -128,3 +128,31 @@ class CoreTest {
         assertTrue("اليوم 5 من 28" in text)
     }
 }
+
+class ShelfTest {
+    private val d = LocalDate.of(2026, 11, 3)
+    private val c = Challenge("c1", Book("الأيام", "طه حسين"), d.minusDays(2), d.plusDays(20), bookId = "b1")
+
+    @Test
+    fun `group entry splits the shared book from the rest`() {
+        val reads = listOf(Read(d, "b1", 20), Read(d, "b2", 25), Read(d.minusDays(1), "b1", 99))
+        val e = Shelf.groupEntry("u1", d, reads, listOf(c), 5)
+        assertEquals(45, e.minutes)
+        assertEquals(20, e.sharedMinutes)
+        assertEquals(0, Shelf.groupEntry("u1", d.plusDays(30), reads, listOf(c), 5).sharedMinutes)
+        assertEquals(listOf(45, 99), Shelf.dayTotals(reads).sortedBy { it.date }.map { it.minutes }.reversed())
+    }
+
+    @Test
+    fun `a group can count only the shared book`() {
+        val m = Member("u1", "سارة", "u1")
+        val entries = listOf(Entry("u1", d, 45, sharedMinutes = 20), Entry("u1", d.plusDays(1), 30, sharedMinutes = 0))
+        val all = GroupData(Group("g", "g", rules = Rules(10, 50, countAll = true)), listOf(m), listOf(c), entries)
+        val shared = all.copy(group = all.group.copy(rules = Rules(10, 50, countAll = false)))
+        assertEquals(7, Scoring.memberScore(all, m, Scope.OfChallenge(c)).points)
+        val s = Scoring.memberScore(shared, m, Scope.OfChallenge(c))
+        assertEquals(2, s.points)
+        assertEquals(1, s.readingDays)
+        assertEquals(75, s.allMinutes)
+    }
+}

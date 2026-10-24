@@ -7,11 +7,39 @@ import java.time.LocalDate
  * group they belong to. A group adds a shared book (a challenge), a ranking and an activity feed.
  */
 
-/** One day of the reader's own log. */
+/** One day of the reader's own log: the total of that day's [Read]s. */
 data class Day(val date: LocalDate, val minutes: Int, val updatedAt: Long = 0)
 
+/** Minutes the reader spent on one book on one day. Every logged minute belongs to a book. */
+data class Read(val date: LocalDate, val bookId: String, val minutes: Int, val updatedAt: Long = 0) {
+    val id: String get() = readId(date, bookId)
+
+    companion object {
+        fun readId(date: LocalDate, bookId: String) = "${date}_$bookId"
+    }
+}
+
+enum class ShelfStatus { READING, FINISHED, WANT }
+
+/** A book on the reader's own shelf, with their running total for it. */
+data class ShelfBook(
+    val bookId: String,
+    val title: String,
+    val author: String,
+    val status: ShelfStatus = ShelfStatus.READING,
+    val minutes: Int = 0,
+    val startedAt: Long = 0,
+    val finishedAt: Long = 0,
+    val lastReadAt: Long = 0,
+)
+
 /** How a group turns reading into points. */
-data class Rules(val minutesPerPoint: Int = 10, val finishBonus: Int = 50) {
+data class Rules(
+    val minutesPerPoint: Int = 10,
+    val finishBonus: Int = 50,
+    /** Count every book the members read (true), or only the group's shared book (false). */
+    val countAll: Boolean = true,
+) {
     fun isValid(): Boolean = minutesPerPoint in 1..600 && finishBonus in 0..10_000
 
     companion object {
@@ -88,7 +116,15 @@ data class Member(
 }
 
 /** A member's minutes on one day, inside one group. */
-data class Entry(val memberId: String, val date: LocalDate, val minutes: Int, val updatedAt: Long = 0) {
+data class Entry(
+    val memberId: String,
+    val date: LocalDate,
+    /** Everything the member read that day. */
+    val minutes: Int,
+    val updatedAt: Long = 0,
+    /** Of which, the group's shared book of that day. */
+    val sharedMinutes: Int = 0,
+) {
     val id: String get() = entryId(memberId, date)
 
     companion object {

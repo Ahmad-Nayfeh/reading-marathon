@@ -37,6 +37,28 @@ service cloud.firestore {
                             && (!('groups' in request.resource.data) || (request.resource.data.groups is list && request.resource.data.groups.size() <= 20));
       allow delete: if isAdmin();
 
+      // Minutes per book per day (the day documents below hold the totals).
+      match /reads/{rid} {
+        allow read: if signedIn() && uid() == userId;
+        allow delete: if (signedIn() && uid() == userId) || isAdmin();
+        allow create, update: if signedIn() && uid() == userId
+                              && request.resource.data.keys().hasOnly(['date', 'bookId', 'minutes', 'updatedAt'])
+                              && validDate(request.resource.data.date)
+                              && request.resource.data.bookId is string && request.resource.data.bookId.size() > 0
+                              && rid == request.resource.data.date + '_' + request.resource.data.bookId
+                              && validMinutes(request.resource.data.minutes);
+      }
+
+      // The reader's shelf: their books and running totals.
+      match /shelf/{bid} {
+        allow read: if signedIn() && uid() == userId;
+        allow delete: if (signedIn() && uid() == userId) || isAdmin();
+        allow create, update: if signedIn() && uid() == userId
+                              && request.resource.data.keys().hasOnly(['title', 'author', 'status', 'minutes', 'startedAt', 'finishedAt', 'lastReadAt'])
+                              && request.resource.data.status in ['reading', 'finished', 'want']
+                              && request.resource.data.title is string && request.resource.data.title.size() <= 120;
+      }
+
       // The reader's own log, one document per day.
       match /days/{date} {
         allow read: if signedIn() && uid() == userId;
@@ -50,6 +72,8 @@ service cloud.firestore {
 
     // The platform admin panel reads across everything with collection-group queries.
     match /{path=**}/days/{doc} { allow read: if isAdmin(); }
+    match /{path=**}/reads/{doc} { allow read: if isAdmin(); }
+    match /{path=**}/shelf/{doc} { allow read: if isAdmin(); }
     match /{path=**}/members/{doc} { allow read: if isAdmin(); }
     match /{path=**}/challenges/{doc} { allow read: if isAdmin(); }
     match /{path=**}/entries/{doc} { allow read: if isAdmin(); }
@@ -177,7 +201,10 @@ service cloud.firestore {
       match /entries/{eid} {
         allow read: if isMember(gid);
         allow create, update: if isMember(gid)
-                              && request.resource.data.keys().hasOnly(['memberId', 'date', 'minutes', 'updatedAt'])
+                              && request.resource.data.keys().hasOnly(['memberId', 'date', 'minutes', 'updatedAt', 'sharedMinutes'])
+                              && request.resource.data.get('sharedMinutes', 0) is int
+                              && request.resource.data.get('sharedMinutes', 0) >= 0
+                              && request.resource.data.get('sharedMinutes', 0) <= request.resource.data.minutes
                               && eid == request.resource.data.memberId + '_' + request.resource.data.date
                               && validDate(request.resource.data.date)
                               && validMinutes(request.resource.data.minutes)

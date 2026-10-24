@@ -69,10 +69,11 @@ fun GroupSettingsScreen(id: String) {
     var public by rememberSaveable(g.id) { mutableStateOf(g.visibility == Visibility.PUBLIC) }
     var perPoint by rememberSaveable(g.id) { mutableIntStateOf(g.rules.minutesPerPoint) }
     var bonus by rememberSaveable(g.id) { mutableIntStateOf(g.rules.finishBonus) }
+    var countAll by rememberSaveable(g.id) { mutableStateOf(g.rules.countAll) }
     var reader by rememberSaveable { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     val changed = name != g.name || about != g.about || public != (g.visibility == Visibility.PUBLIC) ||
-        perPoint != g.rules.minutesPerPoint || bonus != g.rules.finishBonus
+        perPoint != g.rules.minutesPerPoint || bonus != g.rules.finishBonus || countAll != g.rules.countAll
 
     Page("إعدادات المجموعة", onBack = nav::back, subtitle = g.name) {
         SectionLabel("الدعوة")
@@ -108,6 +109,17 @@ fun GroupSettingsScreen(id: String) {
                 Choice("أي قارئ", public, Modifier.weight(1f)) { public = true }
             }
             Spacer(Modifier.height(16.dp))
+            Text("ما الذي يُحسب في الترتيب؟", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Choice("كل قراءة الأعضاء", countAll, Modifier.weight(1f)) { countAll = true }
+                Choice("الكتاب المشترك فقط", !countAll, Modifier.weight(1f)) { countAll = false }
+            }
+            Text(
+                if (countAll) "أي كتاب يقرؤه العضو يُحسب، ويظهر وقت الكتاب المشترك وحده بجانبه." else "السباق على الكتاب المشترك وحده. الكتب الأخرى تبقى في رفّ كل عضو.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
             Text("نقطة لكل كم دقيقة؟", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,7 +133,7 @@ fun GroupSettingsScreen(id: String) {
             }
             Spacer(Modifier.height(18.dp))
             PrimaryButton("حفظ", busy = busy, enabled = changed && name.isNotBlank(), onClick = {
-                vm.run("حُفظت الإعدادات.") { vm.backend.updateGroup(id, name, about, if (public) Visibility.PUBLIC else Visibility.PRIVATE, Rules(perPoint, bonus)) }
+                vm.run("حُفظت الإعدادات.") { vm.backend.updateGroup(id, name, about, if (public) Visibility.PUBLIC else Visibility.PRIVATE, Rules(perPoint, bonus, countAll)) }
             })
         }
 

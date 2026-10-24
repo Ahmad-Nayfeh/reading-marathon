@@ -11,6 +11,9 @@ import com.readingmarathon.core.Entry
 import com.readingmarathon.core.Finish
 import com.readingmarathon.core.Group
 import com.readingmarathon.core.Member
+import com.readingmarathon.core.Read
+import com.readingmarathon.core.ShelfBook
+import com.readingmarathon.core.ShelfStatus
 import com.readingmarathon.core.Role
 import com.readingmarathon.core.Rules
 import com.readingmarathon.core.Suggestion
@@ -23,12 +26,14 @@ import java.time.LocalDate
  * Firestore documents ⇄ core types.
  *
  *   users/{uid}                        email, name, guest, goal, groups[], createdAt, lastSeen
- *   users/{uid}/days/{yyyy-MM-dd}      date, minutes, updatedAt
+ *   users/{uid}/days/{yyyy-MM-dd}      date, minutes, updatedAt              (the day's total)
+ *   users/{uid}/reads/{date_bookId}    date, bookId, minutes, updatedAt      (minutes per book per day)
+ *   users/{uid}/shelf/{bookId}         title, author, status, minutes, startedAt, finishedAt, lastReadAt
  *   groups/{gid}                       name, about, visibility, inviteCode, roles{uid: owner|admin|member},
  *                                      rules{minutesPerPoint, finishBonus}, createdAt, current{…}|null
  *   groups/{gid}/members/{id}          name, linkedUid, active, joinedAt[, code]
  *   groups/{gid}/challenges/{cid}      title, author, start, end
- *   groups/{gid}/entries/{id_date}     memberId, date, minutes, updatedAt
+ *   groups/{gid}/entries/{id_date}     memberId, date, minutes, sharedMinutes, updatedAt
  *   groups/{gid}/finishes/{id_cid}     memberId, challengeId, date
  *   invites/{CODE}                     groupId, createdBy
  *   books/{bid}                        title, author, aliases[], keys[], pages, status, mergedInto, createdBy, createdAt
@@ -51,7 +56,7 @@ object Docs {
     fun visibility(raw: Any?): Visibility = if (raw == "public") Visibility.PUBLIC else Visibility.PRIVATE
     fun visibilityName(v: Visibility): String = v.name.lowercase()
 
-    fun rulesMap(r: Rules): Map<String, Any> = mapOf("minutesPerPoint" to r.minutesPerPoint, "finishBonus" to r.finishBonus)
+    fun rulesMap(r: Rules): Map<String, Any> = mapOf("minutesPerPoint" to r.minutesPerPoint, "finishBonus" to r.finishBonus, "countAll" to r.countAll)
 
     @Suppress("UNCHECKED_CAST")
     fun rules(raw: Any?): Rules {
@@ -59,6 +64,7 @@ object Docs {
         return Rules(
             (m["minutesPerPoint"] as? Number)?.toInt() ?: Rules.DEFAULT.minutesPerPoint,
             (m["finishBonus"] as? Number)?.toInt() ?: Rules.DEFAULT.finishBonus,
+            m["countAll"] as? Boolean ?: true,
         )
     }
 
@@ -110,13 +116,36 @@ object Docs {
     )
 
     fun entryMap(e: Entry): Map<String, Any> =
-        mapOf("memberId" to e.memberId, "date" to e.date.toString(), "minutes" to e.minutes, "updatedAt" to e.updatedAt)
+        mapOf("memberId" to e.memberId, "date" to e.date.toString(), "minutes" to e.minutes, "updatedAt" to e.updatedAt, "sharedMinutes" to e.sharedMinutes)
 
     fun entry(m: Map<String, Any?>) = Entry(
         memberId = m["memberId"] as String,
         date = LocalDate.parse(m["date"] as String),
         minutes = (m["minutes"] as? Number)?.toInt() ?: 0,
         updatedAt = (m["updatedAt"] as? Number)?.toLong() ?: 0,
+        sharedMinutes = (m["sharedMinutes"] as? Number)?.toInt() ?: 0,
+    )
+
+    fun readMap(r: Read): Map<String, Any> = mapOf("date" to r.date.toString(), "bookId" to r.bookId, "minutes" to r.minutes, "updatedAt" to r.updatedAt)
+
+    fun read(m: Map<String, Any?>) = Read(
+        LocalDate.parse(m["date"] as String), m["bookId"] as String, (m["minutes"] as? Number)?.toInt() ?: 0, (m["updatedAt"] as? Number)?.toLong() ?: 0,
+    )
+
+    fun shelfMap(b: ShelfBook): Map<String, Any> = mapOf(
+        "title" to b.title, "author" to b.author, "status" to b.status.name.lowercase(), "minutes" to b.minutes,
+        "startedAt" to b.startedAt, "finishedAt" to b.finishedAt, "lastReadAt" to b.lastReadAt,
+    )
+
+    fun shelf(id: String, m: Map<String, Any?>) = ShelfBook(
+        bookId = id,
+        title = m["title"] as? String ?: "",
+        author = m["author"] as? String ?: "",
+        status = runCatching { ShelfStatus.valueOf((m["status"] as String).uppercase()) }.getOrDefault(ShelfStatus.READING),
+        minutes = (m["minutes"] as? Number)?.toInt() ?: 0,
+        startedAt = (m["startedAt"] as? Number)?.toLong() ?: 0,
+        finishedAt = (m["finishedAt"] as? Number)?.toLong() ?: 0,
+        lastReadAt = (m["lastReadAt"] as? Number)?.toLong() ?: 0,
     )
 
     fun finishMap(f: Finish): Map<String, Any> = mapOf("memberId" to f.memberId, "challengeId" to f.challengeId, "date" to f.date.toString())

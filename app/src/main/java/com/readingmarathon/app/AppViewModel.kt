@@ -14,6 +14,10 @@ import com.readingmarathon.app.data.Settings
 import com.readingmarathon.app.data.ThemeMode
 import com.readingmarathon.app.notify.Reminder
 import com.readingmarathon.core.Day
+import com.readingmarathon.core.CatalogBook
+import com.readingmarathon.core.ShelfStatus
+import com.readingmarathon.core.ShelfBook
+import com.readingmarathon.core.Read
 import com.readingmarathon.core.Fmt
 import com.readingmarathon.core.GroupData
 import com.readingmarathon.core.Ids
@@ -121,48 +125,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveProfile(name: String, goal: Int, success: String? = null) = run(success) { backend.saveProfile(name, goal) }
 
-    // ---- Logging ----
+    // ---- Logging (every minute belongs to a book) ----
 
-    fun minutesOn(date: LocalDate): Int = days.value.firstOrNull { it.date == date }?.minutes ?: 0
+    val reads: StateFlow<List<Read>> = backend.reads
+    val shelf: StateFlow<List<ShelfBook>> = backend.shelf
 
-    /** One tap: adds to today, with an undo. */
-    fun quickAdd(minutes: Int) {
+    fun minutesOn(date: LocalDate): Int = reads.value.filter { it.date == date }.sumOf { it.minutes }
+    fun minutesOn(date: LocalDate, bookId: String): Int = reads.value.firstOrNull { it.date == date && it.bookId == bookId }?.minutes ?: 0
+    fun titleOf(bookId: String): String = shelf.value.firstOrNull { it.bookId == bookId }?.title ?: "كتاب"
+
+    /** One tap: adds minutes to a book today, with an undo. */
+    fun quickAdd(bookId: String, minutes: Int) {
         val date = today()
-        val before = minutesOn(date)
+        val before = minutesOn(date, bookId)
         run(quiet = true) {
-            val total = backend.addMinutes(date, minutes)
-            say("أُضيفت ${Fmt.minutes(minutes)}. مجموع اليوم ${Fmt.minutes(total)}", "تراجع") {
-                run(quiet = true) { backend.setDay(date, before) }
+            val (book, total) = backend.addRead(date, bookId, minutes)
+            say("أُضيفت ${Fmt.minutes(minutes)} إلى «${book.title}». اليوم ${Fmt.minutes(total)}", "تراجع") {
+                run(quiet = true) { backend.setRead(date, bookId, before) }
             }
         }
     }
 
-    fun setDay(date: LocalDate, minutes: Int, then: () -> Unit = {}) {
-        val before = minutesOn(date)
+    fun setRead(date: LocalDate, bookId: String, minutes: Int, then: () -> Unit = {}) {
+        val before = minutesOn(date, bookId)
         run(quiet = true, then = then) {
-            backend.setDay(date, minutes)
-            if (before != minutes) say("حُفظ: ${Fmt.minutes(minutes)} ${if (date == today()) "اليوم" else "في هذا اليوم"}.")
+            backend.setRead(date, bookId, minutes)
+            if (before != minutes) say("حُفظ: ${Fmt.minutes(minutes)} في «${titleOf(bookId)}» ${if (date == today()) "اليوم" else "في هذا اليوم"}.")
         }
     }
 
+    // ---- Shelf ----
+
+    fun shelve(book: CatalogBook, status: ShelfStatus = ShelfStatus.READING, then: () -> Unit = {}) =
+        run("أُضيف «${book.title}» إلى رفّك.", then = then) { backend.shelve(book, status) }
+
+    fun setShelfStatus(book: ShelfBook, status: ShelfStatus) = run(
+        when (status) {
+            ShelfStatus.FINISHED -> "مبارك! أتممت «${book.title}»."
+            ShelfStatus.READING -> "«${book.title}» في «أقرأ الآن»."
+            ShelfStatus.WANT -> "«${book.title}» في «أريد قراءته»."
+        },
+    ) { backend.setShelfStatus(book.bookId, status) }
+
+    fun removeFromShelf(book: ShelfBook) = run("أُزيل «${book.title}» من رفّك.") { backend.removeFromShelf(book.bookId) }
+
     // ---- Timer ----
 
-    fun startTimer() = viewModelScope.launch {
+    fun startTimer(bookId: String) = viewModelScope.launch {
         val now = System.currentTimeMillis()
-        prefs.setTimer(now)
-        Reminder.showTimer(getApplication(), now)
+        prefs.setTimer(now, bookId)
+        Reminder.showTimer(getApplication(), now, titleOf(bookId))
     }
 
     fun stopTimer() = viewModelScope.launch {
         val started = settings.value.timerStartedAt ?: return@launch
-        prefs.setTimer(null)
+        val bookId = settings.value.timerBookId
+        prefs.setTimer(null, null)
         Reminder.hideTimer(getApplication())
         val minutes = Reminder.timerMinutes(started).coerceAtMost(Limits.MAX_MINUTES_PER_DAY)
-        if (minutes < 1) say("أقل من دقيقة، لم يُسجَّل شيء.") else quickAdd(minutes)
+        when {
+            minutes < 1 -> say("أقل من دقيقة، لم يُسجَّل شيء.")
+            bookId == null -> say("لم يُحدَّد كتاب للمؤقت.")
+            else -> quickAdd(bookId, minutes)
+        }
     }
 
     fun cancelTimer() = viewModelScope.launch {
-        prefs.setTimer(null)
+        prefs.setTimer(null, null)
         Reminder.hideTimer(getApplication())
     }
 

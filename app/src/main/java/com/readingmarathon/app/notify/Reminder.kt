@@ -86,23 +86,23 @@ object Reminder {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    internal fun showReminder(context: Context, todayMinutes: Int?) {
+    internal fun showReminder(context: Context, todayMinutes: Int?, book: String? = null) {
         if (!canNotify(context)) return
         val b = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_book)
             .setContentTitle(if (todayMinutes != null && todayMinutes > 0) "قرأت اليوم ${Fmt.minutes(todayMinutes)}" else "هل قرأت اليوم؟")
-            .setContentText("سجّل من هنا مباشرة:")
+            .setContentText(book?.let { "سجّل لـ«$it» من هنا مباشرة:" } ?: "سجّل من هنا مباشرة:")
             .setContentIntent(openApp(context))
             .setAutoCancel(true)
         QUICK.forEach { m -> b.addAction(0, "+$m د", broadcast(context, ACTION_ADD, m)) }
         runCatching { NotificationManagerCompat.from(context).notify(REMINDER_ID, b.build()) }
     }
 
-    private fun showLogged(context: Context, total: Int) {
+    private fun showLogged(context: Context, title: String, total: Int) {
         if (!canNotify(context)) return
         val n = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_book)
-            .setContentTitle("سُجّل. مجموع اليوم ${Fmt.minutes(total)}")
+            .setContentTitle("سُجّل في «$title»: ${Fmt.minutes(total)} اليوم")
             .setContentIntent(openApp(context))
             .setAutoCancel(true)
             .setTimeoutAfter(8_000)
@@ -112,12 +112,12 @@ object Reminder {
     }
 
     /** Ongoing notification while the timer runs, with the elapsed time counting up. */
-    fun showTimer(context: Context, startedAt: Long) {
+    fun showTimer(context: Context, startedAt: Long, title: String) {
         if (!canNotify(context)) return
         val n = NotificationCompat.Builder(context, TIMER_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_book)
-            .setContentTitle("وقت القراءة")
-            .setContentText("اضغط «إيقاف» حين تنتهي لتُسجَّل الدقائق.")
+            .setContentTitle("تقرأ «$title»")
+            .setContentText("اضغط «إيقاف وتسجيل» حين تنتهي.")
             .setWhen(startedAt)
             .setUsesChronometer(true)
             .setOngoing(true)
@@ -136,16 +136,15 @@ object Reminder {
     fun timerMinutes(startedAt: Long, now: Long = System.currentTimeMillis()): Int =
         ((now - startedAt + 30_000) / 60_000).toInt().coerceAtLeast(0)
 
-    internal fun added(context: Context, total: Int) = showLogged(context, total)
+    internal fun added(context: Context, title: String, total: Int) = showLogged(context, title, total)
 }
 
 class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as MarathonApp
-        val today = withTimeoutOrNull(5_000) {
-            app.backend.days.value.firstOrNull { it.date == LocalDate.now() }?.minutes
-        }
-        Reminder.showReminder(applicationContext, today)
+        val today = app.backend.reads.value.filter { it.date == LocalDate.now() }.sumOf { it.minutes }.takeIf { app.backend.reads.value.isNotEmpty() }
+        val book = com.readingmarathon.core.Shelf.reading(app.backend.shelf.value).firstOrNull()?.title
+        Reminder.showReminder(applicationContext, today, book)
         return Result.success()
     }
 }
@@ -157,21 +156,24 @@ class LogReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
             try {
+                var bookId: String? = null
                 val minutes = when (intent.action) {
                     Reminder.ACTION_ADD -> intent.getIntExtra(Reminder.EXTRA_MINUTES, 0)
                     Reminder.ACTION_STOP_TIMER -> {
-                        val started = app.prefs.current().timerStartedAt
-                        app.prefs.setTimer(null)
+                        val s = app.prefs.current()
+                        bookId = s.timerBookId
+                        app.prefs.setTimer(null, null)
                         Reminder.hideTimer(context)
-                        started?.let { Reminder.timerMinutes(it) } ?: 0
+                        s.timerStartedAt?.let { Reminder.timerMinutes(it) } ?: 0
                     }
                     else -> 0
                 }
                 // Started from the notification, the process may still be restoring the sign-in.
                 withTimeoutOrNull(5_000) { app.backend.restoring.first { !it } }
                 if (minutes > 0 && app.backend.account.value != null) {
-                    val total = withTimeoutOrNull(8_000) { app.backend.addMinutes(LocalDate.now(), minutes) }
-                    if (total != null) Reminder.added(context, total)
+                    // The reminder buttons log for the book read most recently.
+                    val result = withTimeoutOrNull(8_000) { app.backend.addRead(LocalDate.now(), bookId, minutes) }
+                    if (result != null) Reminder.added(context, result.first.title, result.second)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("Marathon", "quick log", e)

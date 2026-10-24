@@ -178,6 +178,23 @@ await t('suspended account cannot read the catalog', assertFails(getDocs(query(c
 await t('admin lifts the suspension', assertSucceeds(deleteDoc(doc(adm, 'banned/eve'))));
 await t('eve logs again', assertSucceeds(setDoc(doc(eve, 'users/eve/days/2026-10-24'), { date: '2026-10-24', minutes: 10, updatedAt: 1 })));
 
+// --- reading per book and the shelf
+const rd = (d, b, m = 20) => ({ date: d, bookId: b, minutes: m, updatedAt: 1 });
+await t('reader logs minutes for a book', assertSucceeds(setDoc(doc(ali, 'users/ali/reads/2026-10-24_b1'), rd('2026-10-24', 'b1'))));
+await t('read id must be date_book', assertFails(setDoc(doc(ali, 'users/ali/reads/x'), rd('2026-10-24', 'b1'))));
+await t('read needs a book', assertFails(setDoc(doc(ali, 'users/ali/reads/2026-10-24_'), rd('2026-10-24', ''))));
+await t('nobody else reads my reads', assertFails(getDoc(doc(eve, 'users/ali/reads/2026-10-24_b1'))));
+await t('reader shelves a book', assertSucceeds(setDoc(doc(ali, 'users/ali/shelf/b1'), { title: 'الأيام', author: 'طه حسين', status: 'reading', minutes: 0, startedAt: 1, finishedAt: 0, lastReadAt: 0 })));
+await t('shelf status is checked', assertFails(setDoc(doc(ali, 'users/ali/shelf/b2'), { title: 'x', author: 'y', status: 'lost' })));
+await t('nobody else writes my shelf', assertFails(setDoc(doc(eve, 'users/ali/shelf/b3'), { title: 'x', author: 'y', status: 'reading' })));
+await t('admin reads every shelf', assertSucceeds(getDocs(collectionGroup(adm, 'shelf'))));
+await env.withSecurityRulesDisabled(async (c) => {
+  const f = c.firestore();
+  await setDoc(doc(f, 'groups/g9'), { name: 'ن', visibility: 'private', inviteCode: 'QQQ234', roles: { ali: 'member' } });
+});
+await t('group entry with its shared-book part', assertSucceeds(setDoc(doc(ali, 'groups/g9/entries/ali_2026-10-24'), { memberId: 'ali', date: '2026-10-24', minutes: 45, sharedMinutes: 20, updatedAt: 1 })));
+await t('shared part cannot exceed the total', assertFails(setDoc(doc(ali, 'groups/g9/entries/ali_2026-10-25'), { memberId: 'ali', date: '2026-10-25', minutes: 10, sharedMinutes: 20, updatedAt: 1 })));
+
 console.log(`\n${n - bad}/${n} passed`);
 await env.cleanup();
 process.exit(bad ? 1 : 0);

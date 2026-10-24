@@ -25,6 +25,8 @@ data class Settings(
     val reminderMinute: Int = 0,
     /** Epoch millis when the reading timer started, or null when it isn't running. */
     val timerStartedAt: Long? = null,
+    /** The book the timer is counting for. */
+    val timerBookId: String? = null,
     /** Announcements the reader has closed. */
     val dismissed: Set<String> = emptySet(),
 )
@@ -36,6 +38,7 @@ class Prefs(private val context: Context) {
         val reminderH = intPreferencesKey("reminder_h")
         val reminderM = intPreferencesKey("reminder_m")
         val timer = longPreferencesKey("timer_started_at")
+        val timerBook = stringPreferencesKey("timer_book")
         val dismissed = stringSetPreferencesKey("dismissed_announcements")
     }
 
@@ -49,6 +52,7 @@ class Prefs(private val context: Context) {
         reminderHour = this[K.reminderH] ?: 21,
         reminderMinute = this[K.reminderM] ?: 0,
         timerStartedAt = this[K.timer],
+        timerBookId = this[K.timerBook],
         dismissed = this[K.dismissed].orEmpty(),
     )
 
@@ -60,7 +64,10 @@ class Prefs(private val context: Context) {
 
     suspend fun dismiss(id: String) { context.store.edit { it[K.dismissed] = it[K.dismissed].orEmpty() + id } }
 
-    suspend fun setTimer(startedAt: Long?) {
-        context.store.edit { if (startedAt == null) it.remove(K.timer) else it[K.timer] = startedAt }
+    suspend fun setTimer(startedAt: Long?, bookId: String?) {
+        context.store.edit {
+            if (startedAt == null) it.remove(K.timer) else it[K.timer] = startedAt
+            if (bookId == null) it.remove(K.timerBook) else it[K.timerBook] = bookId
+        }
     }
 }

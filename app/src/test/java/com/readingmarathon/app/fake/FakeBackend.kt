@@ -27,6 +27,10 @@ import com.readingmarathon.core.Finish
 import com.readingmarathon.core.GroupData
 import com.readingmarathon.core.Group
 import com.readingmarathon.core.Ids
+import com.readingmarathon.core.ShelfStatus
+import com.readingmarathon.core.ShelfBook
+import com.readingmarathon.core.Shelf
+import com.readingmarathon.core.Read
 import com.readingmarathon.core.Limits
 import com.readingmarathon.core.Member
 import com.readingmarathon.core.Role
@@ -74,6 +78,8 @@ class FakeBackend : Backend {
         val uid = _account.value?.uid
         _profile.value = uid?.let { profiles[it] ?: Profile("") }
         _days.value = uid?.let { logs[it]?.values?.toList() }.orEmpty()
+        _reads.value = uid?.let { readsBy[it]?.values?.toList() }.orEmpty()
+        _shelf.value = uid?.let { shelves[it]?.values?.toList() }.orEmpty()
         val wanted = _profile.value?.groups.orEmpty().toSet() + peeked
         _groups.value = all.filterKeys { it in wanted }
     }
@@ -98,24 +104,56 @@ class FakeBackend : Backend {
         publish()
     }
 
-    override suspend fun setDay(date: LocalDate, minutes: Int) {
-        Validation.day(date, minutes, today())
+    val readsBy = LinkedHashMap<String, MutableMap<String, Read>>()
+    val shelves = LinkedHashMap<String, LinkedHashMap<String, ShelfBook>>()
+    private val _reads = MutableStateFlow<List<Read>>(emptyList())
+    override val reads: StateFlow<List<Read>> = _reads
+    private val _shelf = MutableStateFlow<List<ShelfBook>>(emptyList())
+    override val shelf: StateFlow<List<ShelfBook>> = _shelf
+
+    override suspend fun setRead(date: LocalDate, bookId: String, minutes: Int) {
         val me = me()
-        logs.getOrPut(me) { LinkedHashMap() }[date] = Day(date, minutes, System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        val mine = readsBy.getOrPut(me) { LinkedHashMap() }
+        val before = mine[Read.readId(date, bookId)]?.minutes ?: 0
+        val after = mine.values.filter { it.date == date && it.bookId != bookId } + Read(date, bookId, minutes, now)
+        Validation.day(date, after.sumOf { it.minutes }, today())
+        if (minutes == 0) mine.remove(Read.readId(date, bookId)) else mine[Read.readId(date, bookId)] = Read(date, bookId, minutes, now)
+        logs.getOrPut(me) { LinkedHashMap() }[date] = Day(date, after.sumOf { it.minutes }, now)
+        shelves[me]?.get(bookId)?.let { shelves.getValue(me)[bookId] = it.copy(minutes = it.minutes + minutes - before, lastReadAt = now) }
         profiles[me]?.groups.orEmpty().forEach { gid ->
             all[gid]?.let { d ->
+                val e = Shelf.groupEntry(me, date, after.filter { it.minutes > 0 }, d.challenges, now)
                 val others = d.entries.filter { !(it.memberId == me && it.date == date) }
-                all[gid] = d.copy(entries = if (minutes == 0) others else others + Entry(me, date, minutes, System.currentTimeMillis()))
+                all[gid] = d.copy(entries = if (e.minutes == 0) others else others + e)
             }
         }
         publish()
     }
 
-    override suspend fun addMinutes(date: LocalDate, minutes: Int): Int {
-        val total = ((logs[me()]?.get(date)?.minutes ?: 0) + minutes).coerceIn(0, Limits.MAX_MINUTES_PER_DAY)
-        setDay(date, total)
-        return total
+    override suspend fun addRead(date: LocalDate, bookId: String?, minutes: Int): Pair<ShelfBook, Int> {
+        val me = me()
+        val shelf = shelves[me]?.values?.toList().orEmpty()
+        val book = (if (bookId != null) shelf.firstOrNull { it.bookId == bookId } else Shelf.reading(shelf).firstOrNull())
+            ?: throw RuleViolation("اختر الكتاب الذي تقرؤه أولاً.")
+        val current = readsBy[me]?.get(Read.readId(date, book.bookId))?.minutes ?: 0
+        setRead(date, book.bookId, current + minutes)
+        return book to current + minutes
     }
+
+    override suspend fun shelve(book: CatalogBook, status: ShelfStatus) {
+        val mine = shelves.getOrPut(me()) { LinkedHashMap() }
+        mine[book.id] = (mine[book.id] ?: ShelfBook(book.id, book.title, book.author, startedAt = System.currentTimeMillis())).copy(status = status)
+        publish()
+    }
+
+    override suspend fun setShelfStatus(bookId: String, status: ShelfStatus) {
+        val mine = shelves.getOrPut(me()) { LinkedHashMap() }
+        mine[bookId]?.let { mine[bookId] = it.copy(status = status, finishedAt = if (status == ShelfStatus.FINISHED) System.currentTimeMillis() else 0) }
+        publish()
+    }
+
+    override suspend fun removeFromShelf(bookId: String) { shelves[me()]?.remove(bookId); publish() }
 
     /** Test setup: a group as it would exist on the server. */
     fun seed(d: GroupData) {
@@ -380,7 +418,7 @@ class FakeBackend : Backend {
         val days = logs[uid]?.values?.sortedByDescending { it.date }.orEmpty()
         return AdminUserDetail(
             AdminUser(uid, a?.email, p.name, a?.isGuest ?: true, 0, System.currentTimeMillis(), p.groups.size, days.sumOf { it.minutes.toLong() }),
-            p.goal, days, p.groups.map { it to (all[it]?.group?.name ?: "—") }, uid in bannedSet,
+            p.goal, days, p.groups.map { it to (all[it]?.group?.name ?: "—") }, shelves[uid]?.values?.toList().orEmpty(), banned = uid in bannedSet,
         )
     }
 
