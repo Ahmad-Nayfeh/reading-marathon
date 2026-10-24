@@ -117,7 +117,8 @@ fun GroupScreen(id: String) {
         return
     }
     val today = vm.today()
-    val role = if (isAdmin && d.group.roleOf(uid) == null) Role.OWNER else d.group.roleOf(uid)
+    // The platform admin manages every group as its owner would.
+    val role = if (isAdmin) Role.OWNER else d.group.roleOf(uid)
     val manager = role?.canManage == true
     var tab by rememberSaveable { mutableStateOf(0) }
     var menu by remember { mutableStateOf(false) }
@@ -185,6 +186,7 @@ fun GroupScreen(id: String) {
 private fun CurrentBook(d: GroupData, c: Challenge?, uid: String, today: LocalDate, manager: Boolean) {
     val vm = LocalVm.current
     val nav = LocalNav.current
+    var suggesting by remember { mutableStateOf(false) }
     if (c == null) {
         PaperCard {
             EmptyState(
@@ -210,8 +212,16 @@ private fun CurrentBook(d: GroupData, c: Challenge?, uid: String, today: LocalDa
                 )
                 BookTitle(c.book.title, c.book.author)
                 Text(Dates.span(c.start, c.end), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (c.bookId != null) {
+                    Text(
+                        "خطأ في العنوان أو المؤلف؟",
+                        style = MaterialTheme.typography.labelMedium, color = Brand.colors.gold,
+                        modifier = Modifier.clickable { suggesting = true }.padding(top = 6.dp),
+                    )
+                }
             }
         }
+        if (suggesting && c.bookId != null) SuggestSheet(c.bookId!!, c.book.title, c.book.author) { suggesting = false }
         Spacer(Modifier.height(14.dp))
         when (status) {
             ChallengeStatus.ACTIVE -> {

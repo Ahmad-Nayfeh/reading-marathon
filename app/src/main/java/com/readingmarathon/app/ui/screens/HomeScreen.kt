@@ -18,11 +18,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Campaign
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -81,6 +84,23 @@ fun HomeScreen(onGroups: () -> Unit) {
         Text(greeting() + "، " + profile?.name.orEmpty(), style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("${Dates.weekday(today)} ${Dates.long(today)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         GoldRule(Modifier.padding(top = 10.dp, bottom = 18.dp))
+
+        val news by vm.announcements.collectAsStateWithLifecycle()
+        news.forEach { a ->
+            PaperCard(modifier = Modifier.padding(bottom = 12.dp)) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Rounded.Campaign, null, tint = Brand.colors.gold, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        if (a.title.isNotBlank()) Text(a.title, style = MaterialTheme.typography.titleMedium)
+                        if (a.body.isNotBlank()) Text(a.body, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    IconButton(onClick = { vm.dismiss(a.id) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Rounded.Close, "إخفاء", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
 
         TodayCard(stats.today, goal, stats.currentStreak, settings.timerStartedAt)
 

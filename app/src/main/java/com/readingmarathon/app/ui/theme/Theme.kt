@@ -1,6 +1,7 @@
 package com.readingmarathon.app.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -170,6 +171,9 @@ fun MarathonTheme(mode: ThemeMode = ThemeMode.SYSTEM, content: @Composable () ->
         ThemeMode.DARK -> true
     }
     CompositionLocalProvider(LocalBrand provides if (dark) DarkBrand else LightBrand) {
-        MaterialTheme(colorScheme = if (dark) DarkScheme else LightScheme, typography = typography(), content = content)
+        MaterialTheme(colorScheme = if (dark) DarkScheme else LightScheme, typography = typography()) {
+            // Text outside a Surface would otherwise fall back to black, unreadable in dark mode.
+            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground, content = content)
+        }
     }
 }

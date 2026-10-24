@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.readingmarathon.app.data.Account
 import com.readingmarathon.app.data.AdminOverview
+import com.readingmarathon.app.data.Announcement
 import com.readingmarathon.app.data.Backend
 import com.readingmarathon.app.data.GroupPreview
 import com.readingmarathon.app.data.Profile
@@ -46,12 +47,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val profile: StateFlow<Profile?> = backend.profile
     val days: StateFlow<List<Day>> = backend.days
     val groups: StateFlow<Map<String, GroupData>> = backend.groups
+    val banned: StateFlow<Boolean> = backend.banned
 
     /** The reader's groups in their own order, as far as loaded. */
     val myGroups: StateFlow<List<GroupData>> = combine(backend.profile, backend.groups) { p, g -> p?.groups.orEmpty().mapNotNull { g[it] } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val settings: StateFlow<Settings> = prefs.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
+
+    /** Announcements the reader hasn't closed yet. */
+    val announcements: StateFlow<List<Announcement>> = combine(backend.announcements, prefs.settings) { list, s -> list.filter { it.id !in s.dismissed } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun dismiss(id: String) = viewModelScope.launch { prefs.dismiss(id) }
 
     private val _messages = MutableSharedFlow<Message>(extraBufferCapacity = 4)
     val messages: SharedFlow<Message> = _messages

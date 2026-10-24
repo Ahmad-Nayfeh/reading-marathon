@@ -36,6 +36,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,10 @@ import com.readingmarathon.app.ui.components.StatRow
 import com.readingmarathon.core.Fmt
 import com.readingmarathon.core.Limits
 import com.readingmarathon.core.Stats
+import com.readingmarathon.core.Suggestion
+import com.readingmarathon.core.SuggestionStatus
+import com.readingmarathon.core.SuggestionType
+import com.readingmarathon.app.ui.components.Tag
 
 /** The reader's own numbers and the phone's settings. */
 @Composable
@@ -116,6 +121,27 @@ fun MeScreen() {
 
         SectionLabel("هدفي اليومي")
         GoalChips(p.goal) { vm.saveProfile(p.name, it, "صار هدفك ${Fmt.minutes(it)} في اليوم.") }
+
+        var mine by remember { mutableStateOf<List<Suggestion>>(emptyList()) }
+        LaunchedEffect(acc.uid) { mine = runCatching { vm.backend.mySuggestions() }.getOrDefault(emptyList()) }
+        if (mine.isNotEmpty()) {
+            SectionLabel("اقتراحاتي للفهرس")
+            PaperCard(padding = PaddingValues(vertical = 4.dp)) {
+                mine.take(10).forEachIndexed { i, sg ->
+                    if (i > 0) ListDivider()
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                when (sg.type) { SuggestionType.NEW_BOOK -> "كتاب جديد"; SuggestionType.FIX -> "تصحيح"; SuggestionType.DUPLICATE -> "كتاب مكرر" } + ": «${sg.title}»",
+                                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1,
+                            )
+                            Tag(when (sg.status) { SuggestionStatus.OPEN -> "قيد المراجعة"; SuggestionStatus.ACCEPTED -> "قُبل"; SuggestionStatus.REJECTED -> "لم يُقبل" }, strong = sg.status == SuggestionStatus.ACCEPTED)
+                        }
+                        if (sg.reply.isNotBlank()) Text("الرد: ${sg.reply}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
 
         SectionLabel("الإعدادات")
         PaperCard(padding = PaddingValues(vertical = 4.dp)) {

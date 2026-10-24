@@ -7,6 +7,15 @@ import com.readingmarathon.app.data.AdminOverview
 import com.readingmarathon.app.data.AdminUser
 import com.readingmarathon.app.data.Backend
 import com.readingmarathon.app.data.Checks
+import com.readingmarathon.app.data.AdminUserDetail
+import com.readingmarathon.app.data.Announcement
+import com.readingmarathon.app.data.LogEntry
+import com.readingmarathon.core.BookStatus
+import com.readingmarathon.core.Catalog
+import com.readingmarathon.core.CatalogBook
+import com.readingmarathon.core.Suggestion
+import com.readingmarathon.core.SuggestionStatus
+import com.readingmarathon.core.SuggestionType
 import com.readingmarathon.app.data.GroupPreview
 import com.readingmarathon.app.data.Profile
 import com.readingmarathon.core.BookBrief
@@ -57,6 +66,7 @@ class FakeBackend : Backend {
         accounts[a.uid] = a
         _account.value = a
         publish()
+        emitExtras()
     }
 
     /** Re-emits what the signed-in account sees. */
@@ -269,6 +279,139 @@ class FakeBackend : Backend {
         publish()
     }
 
+    // ---- Catalog ----
+
+    val books = LinkedHashMap<String, CatalogBook>()
+    val suggestions = LinkedHashMap<String, Suggestion>()
+    val news = LinkedHashMap<String, Announcement>()
+    val bannedSet = HashSet<String>()
+    val log = mutableListOf<LogEntry>()
+    private val _announcements = MutableStateFlow<List<Announcement>>(emptyList())
+    override val announcements: StateFlow<List<Announcement>> = _announcements
+    private val _banned = MutableStateFlow(false)
+    override val banned: StateFlow<Boolean> = _banned
+
+    private fun emitExtras() {
+        _announcements.value = news.values.filter { it.active }.sortedByDescending { it.createdAt }
+        _banned.value = _account.value?.uid in bannedSet
+    }
+
+    private fun requireAdmin() { if (!isAdmin()) throw RuleViolation("هذا لمدير المنصة فقط.") }
+    private fun record(action: String, target: String = "") { log += LogEntry(Ids.newId("l_"), System.currentTimeMillis(), action, target) }
+
+    override suspend fun searchBooks(query: String) = Catalog.rank(query, books.values.toList()).take(20)
+    override suspend fun book(id: String) = books[id]
+
+    override suspend fun proposeBook(title: String, author: String, pages: Int?): CatalogBook {
+        Catalog.validate(title, author)
+        Catalog.findSame(title, author, books.values.toList())?.let { return it }
+        val b = CatalogBook(Ids.newId("b_"), title.trim(), author.trim(), pages = pages, status = BookStatus.PENDING, createdBy = me(), createdAt = System.currentTimeMillis())
+        books[b.id] = b
+        val sid = Ids.newId("s_")
+        suggestions[sid] = Suggestion(sid, SuggestionType.NEW_BOOK, b.id, title = b.title, author = b.author, by = me(), byName = profiles[me()]?.name.orEmpty(), createdAt = b.createdAt)
+        return b
+    }
+
+    override suspend fun suggest(suggestion: Suggestion) {
+        val id = Ids.newId("s_")
+        suggestions[id] = suggestion.copy(id = id, by = me(), byName = profiles[me()]?.name.orEmpty(), status = SuggestionStatus.OPEN, createdAt = System.currentTimeMillis())
+    }
+
+    override suspend fun mySuggestions() = suggestions.values.filter { it.by == me() }.sortedByDescending { it.createdAt }
+
+    override suspend fun adminBooks(): List<CatalogBook> { requireAdmin(); return books.values.sortedBy { it.title } }
+
+    override suspend fun adminSaveBook(book: CatalogBook): CatalogBook {
+        requireAdmin()
+        Catalog.validate(book.title, book.author)
+        val b = book.copy(id = book.id.ifBlank { Ids.newId("b_") }, title = book.title.trim(), author = book.author.trim(), status = BookStatus.VERIFIED)
+        books[b.id] = b
+        all.keys.toList().forEach { gid ->
+            all[gid] = all.getValue(gid).let { d -> d.copy(challenges = d.challenges.map { c -> if (c.bookId == b.id) c.copy(book = b.book) else c }) }
+        }
+        record("حفظ كتاباً", b.title)
+        publish()
+        return b
+    }
+
+    override suspend fun adminDeleteBook(id: String) { requireAdmin(); books.remove(id); record("حذف كتاباً", id) }
+
+    override suspend fun adminMergeBooks(fromId: String, intoId: String) {
+        requireAdmin()
+        val from = books.getValue(fromId)
+        val into = books.getValue(intoId)
+        val kept = into.copy(aliases = Catalog.mergedAliases(into, from))
+        books[intoId] = kept
+        books[fromId] = from.copy(status = BookStatus.MERGED, mergedInto = intoId)
+        all.keys.toList().forEach { gid ->
+            all[gid] = all.getValue(gid).let { d -> d.copy(challenges = d.challenges.map { c -> if (c.bookId == fromId) c.copy(bookId = intoId, book = kept.book) else c }) }
+        }
+        record("دمج كتابين", "${from.title} ← ${into.title}")
+        publish()
+    }
+
+    override suspend fun adminImportBooks(books: List<CatalogBook>): Int {
+        requireAdmin()
+        var n = 0
+        books.forEach { x ->
+            if (Catalog.findSame(x.title, x.author, this.books.values.toList()) == null) {
+                val b = x.copy(id = Ids.newId("b_"), status = BookStatus.VERIFIED)
+                this.books[b.id] = b
+                n++
+            }
+        }
+        return n
+    }
+
+    override suspend fun adminSuggestions(): List<Suggestion> { requireAdmin(); return suggestions.values.sortedByDescending { it.createdAt } }
+
+    override suspend fun adminResolve(id: String, accepted: Boolean, reply: String) {
+        requireAdmin()
+        val sg = suggestions.getValue(id)
+        if (accepted && sg.type == SuggestionType.NEW_BOOK) sg.bookId?.let { b -> books[b]?.let { books[b] = it.copy(status = BookStatus.VERIFIED) } }
+        if (accepted && sg.type == SuggestionType.DUPLICATE) adminMergeBooks(sg.bookId!!, sg.otherBookId!!)
+        suggestions[id] = sg.copy(status = if (accepted) SuggestionStatus.ACCEPTED else SuggestionStatus.REJECTED, reply = reply, resolvedAt = System.currentTimeMillis())
+    }
+
+    override suspend fun adminUser(uid: String): AdminUserDetail {
+        requireAdmin()
+        val a = accounts[uid]
+        val p = profiles[uid] ?: Profile("")
+        val days = logs[uid]?.values?.sortedByDescending { it.date }.orEmpty()
+        return AdminUserDetail(
+            AdminUser(uid, a?.email, p.name, a?.isGuest ?: true, 0, System.currentTimeMillis(), p.groups.size, days.sumOf { it.minutes.toLong() }),
+            p.goal, days, p.groups.map { it to (all[it]?.group?.name ?: "—") }, uid in bannedSet,
+        )
+    }
+
+    override suspend fun adminRenameUser(uid: String, name: String) { requireAdmin(); profiles[uid]?.let { profiles[uid] = it.copy(name = name.trim()) }; publish() }
+    override suspend fun adminSetBanned(uid: String, banned: Boolean) { requireAdmin(); if (banned) bannedSet += uid else bannedSet -= uid; emitExtras() }
+
+    override suspend fun adminDeleteUserData(uid: String) {
+        requireAdmin()
+        logs.remove(uid)
+        profiles[uid]?.groups?.forEach { gid ->
+            all[gid]?.let { d -> all[gid] = d.copy(group = d.group.copy(roles = d.group.roles - uid), members = d.members.filter { it.id != uid }, entries = d.entries.filter { it.memberId != uid }) }
+        }
+        profiles.remove(uid)
+        publish()
+    }
+
+    override suspend fun adminAnnouncements(): List<Announcement> { requireAdmin(); return news.values.sortedByDescending { it.createdAt } }
+
+    override suspend fun adminSaveAnnouncement(a: Announcement) {
+        requireAdmin()
+        val id = a.id.ifBlank { Ids.newId("a_") }
+        news[id] = a.copy(id = id, createdAt = a.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis())
+        emitExtras()
+    }
+
+    override suspend fun adminDeleteAnnouncement(id: String) { requireAdmin(); news.remove(id); emitExtras() }
+    override suspend fun adminLog(): List<LogEntry> { requireAdmin(); return log.reversed() }
+
+    /** Test setup: publish announcements/bans that were put in the maps directly. */
+    fun refreshExtras() = emitExtras()
+
     override suspend fun adminOverview(): AdminOverview {
         if (!isAdmin()) throw RuleViolation("هذه اللوحة لمدير المنصة فقط.")
         val today = today()
@@ -292,6 +435,12 @@ class FakeBackend : Backend {
             readingDays = days.count { it.minutes > 0 },
             finishedBooks = all.values.sumOf { it.finishes.size },
             daily = (29 downTo 0).map { back -> days.filter { it.date == today.minusDays(back.toLong()) }.sumOf { it.minutes.toLong() } },
+            activeReaders = (29 downTo 0).map { back -> logs.values.count { m -> (m[today.minusDays(back.toLong())]?.minutes ?: 0) > 0 } },
+            topBooks = all.values.flatMap { d -> d.challenges.map { it.book.title to d.group.id } }.groupBy({ it.first }, { it.second }).map { (t, g) -> t to g.distinct().size }.sortedByDescending { it.second },
+            catalogBooks = books.values.count { it.status != BookStatus.MERGED },
+            pendingBooks = books.values.count { it.status == BookStatus.PENDING },
+            openSuggestions = suggestions.values.count { it.status == SuggestionStatus.OPEN },
+            banned = bannedSet.toSet(),
         )
     }
 }

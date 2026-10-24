@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.readingmarathon.app.AppViewModel
+import com.readingmarathon.app.ui.screens.BannedScreen
 import com.readingmarathon.app.ui.screens.LoadingScreen
 import com.readingmarathon.app.ui.screens.NameScreen
 import com.readingmarathon.app.ui.screens.Shell
@@ -45,6 +46,7 @@ fun MarathonRoot(vm: AppViewModel) {
     val restoring by vm.restoring.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
+    val banned by vm.banned.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -64,6 +66,7 @@ fun MarathonRoot(vm: AppViewModel) {
                 val stage = when {
                     restoring -> Stage.SPLASH
                     account == null -> Stage.SIGN_IN
+                    banned -> Stage.BANNED
                     profile == null -> Stage.LOADING
                     profile?.name.isNullOrBlank() -> Stage.NAME
                     else -> Stage.APP
@@ -72,6 +75,7 @@ fun MarathonRoot(vm: AppViewModel) {
                     when (s) {
                         Stage.SPLASH -> Splash()
                         Stage.SIGN_IN -> SignInScreen()
+                        Stage.BANNED -> BannedScreen()
                         Stage.LOADING -> LoadingScreen()
                         Stage.NAME -> NameScreen()
                         Stage.APP -> Shell()
@@ -87,4 +91,4 @@ fun MarathonRoot(vm: AppViewModel) {
     }
 }
 
-private enum class Stage { SPLASH, SIGN_IN, LOADING, NAME, APP }
+private enum class Stage { SPLASH, SIGN_IN, BANNED, LOADING, NAME, APP }

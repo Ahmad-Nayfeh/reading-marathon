@@ -1,7 +1,9 @@
 package com.readingmarathon.app
 
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -10,9 +12,14 @@ import androidx.test.core.app.ActivityScenario
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.readingmarathon.app.data.ADMIN_EMAIL
 import com.readingmarathon.app.data.Account
+import com.readingmarathon.app.data.Announcement
 import com.readingmarathon.app.data.Profile
 import com.readingmarathon.app.fake.FakeBackend
 import com.readingmarathon.core.Book
+import com.readingmarathon.core.BookStatus
+import com.readingmarathon.core.CatalogBook
+import com.readingmarathon.core.Suggestion
+import com.readingmarathon.core.SuggestionType
 import com.readingmarathon.core.Challenge
 import com.readingmarathon.core.Day
 import com.readingmarathon.core.Entry
@@ -56,7 +63,7 @@ class ScreensTest {
     private fun club(): GroupData {
         val names = listOf("u_sara" to "سارة", "u_khalid" to "خالد", "u_mona" to "منى", "u_omar" to "عمر", "u_huda" to "هدى", "r_abu" to "أبو أحمد")
         val members = names.map { (id, n) -> Member(id, n, if (id.startsWith("u_")) id else null) }
-        val book = Challenge("c_now", Book("الأيام", "طه حسين"), today.minusDays(11), today.plusDays(16))
+        val book = Challenge("c_now", Book("الأيام", "طه حسين"), today.minusDays(11), today.plusDays(16), bookId = "b_ayyam")
         val past = Challenge("c_past", Book("موسم الهجرة إلى الشمال", "الطيب صالح"), today.minusDays(45), today.minusDays(18))
         val pattern = listOf(30, 45, 0, 20, 60, 15, 40, 25, 0, 50, 35, 30)
         val entries = members.flatMapIndexed { i, m ->
@@ -83,6 +90,18 @@ class ScreensTest {
         backend.seed(GroupData(Group("g_family", "قراءة العائلة", visibility = Visibility.PRIVATE, inviteCode = "FAM234", roles = mapOf("u_sara" to Role.MEMBER, "u_dad" to Role.OWNER)), listOf(Member("u_sara", "سارة", "u_sara"), Member("u_dad", "أبي", "u_dad"))))
         backend.seed(GroupData(Group("g_public", "قرّاء الرياض", "مجموعة مفتوحة لكل من يحب القراءة في الرياض.", Visibility.PUBLIC, "RYD456", mapOf("u_x" to Role.OWNER, "u_y" to Role.MEMBER, "u_z" to Role.MEMBER))))
         backend.logs["u_sara"] = d.entries.filter { it.memberId == "u_sara" }.associate { it.date to Day(it.date, it.minutes) }.toMutableMap()
+        listOf(
+            CatalogBook("b_ayyam", "الأيام", "طه حسين", aliases = listOf("أيام طه حسين")),
+            CatalogBook("b_granada", "ثلاثية غرناطة", "رضوى عاشور", aliases = listOf("غرناطة")),
+            CatalogBook("b_mawsim", "موسم الهجرة إلى الشمال", "الطيب صالح"),
+            CatalogBook("b_rijal", "رجال في الشمس", "غسان كنفاني"),
+            CatalogBook("b_new", "عائد إلى حيفا", "غسان كنفاني", status = BookStatus.PENDING, createdBy = "u_mona"),
+        ).forEach { backend.books[it.id] = it }
+        backend.suggestions["s1"] = Suggestion("s1", SuggestionType.NEW_BOOK, "b_new", title = "عائد إلى حيفا", author = "غسان كنفاني", by = "u_mona", byName = "منى", createdAt = System.currentTimeMillis() - 3_600_000)
+        backend.suggestions["s2"] = Suggestion("s2", SuggestionType.FIX, "b_mawsim", title = "موسم الهجرة إلى الشمال", author = "الطيب صالح", note = "اسم المؤلف ناقص: الطيب محمد صالح", by = "u_khalid", byName = "خالد", createdAt = System.currentTimeMillis() - 7_200_000)
+        backend.news["a1"] = Announcement("a1", "فهرس الكتب صار موحّداً", "اختر كتاب مجموعتك من الفهرس، وإن لم تجده فأضفه.", createdAt = System.currentTimeMillis())
+        backend.profiles["u_khalid"] = Profile("خالد", groups = listOf("g_club"))
+        backend.accounts["u_khalid"] = Account("u_khalid", "khalid@gmail.com", "Khalid", false)
         MarathonApp.backendOverride = backend
         scenario = ActivityScenario.launch(MainActivity::class.java)
     }
@@ -163,6 +182,87 @@ class ScreensTest {
     }
 
     @Test
+    fun catalog() {
+        backend.signIn(sara)
+        waitFor("مجموعاتي")
+        tap("نادي كتاب الحي")
+        waitFor("نقرأ الآن")
+        tap("الكتب")
+        tap("كتاب جديد")
+        waitFor("ابحث بالعنوان")
+        compose.onAllNodes(hasSetTextAction())[0].performTextInput("كنفاني")
+        compose.mainClock.advanceTimeBy(1_000)
+        waitFor("رجال في الشمس")
+        shot("15-book-picker")
+        tap("لم أجد الكتاب؟ أضفه إلى الفهرس")
+        waitFor("كتاب جديد في الفهرس")
+        shot("16-new-book")
+    }
+
+    @Test
+    fun suggestFix() {
+        backend.signIn(sara)
+        waitFor("مجموعاتي")
+        tap("نادي كتاب الحي")
+        tap("خطأ في العنوان أو المؤلف؟")
+        waitFor("اقتراح تصحيح")
+        shot("17-suggest")
+    }
+
+    @Test
+    @Config(qualifiers = "+night")
+    fun dark() {
+        shot("20-dark-sign-in")
+        backend.signIn(Account("u_new", null, null, isGuest = true))
+        waitFor("أهلاً بك")
+        shot("21-dark-name")
+        scenario.close()
+        backend.signIn(sara)
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        waitFor("مجموعاتي")
+        shot("22-dark-home")
+        tap("نادي كتاب الحي")
+        waitFor("نقرأ الآن")
+        shot("23-dark-group")
+        tap("النشاط")
+        shot("24-dark-activity")
+    }
+
+    @Test
+    fun adminTabs() {
+        backend.profiles["u_admin"] = Profile("الإدارة")
+        backend.signIn(Account("u_admin", ADMIN_EMAIL, "الإدارة", false))
+        waitFor("مجموعاتي")
+        tap("أنا")
+        tap("لوحة إدارة المنصة")
+        waitFor("كتاب في الفهرس")
+        shot("30-admin-overview")
+        tap("الاقتراحات (2)")
+        waitFor("عائد إلى حيفا")
+        shot("31-admin-suggestions")
+        tap("تصحيح: «موسم الهجرة إلى الشمال»")
+        waitFor("تطبيق التصحيح")
+        shot("32-admin-suggestion")
+        tap("رفض")
+        tap("الكتب")
+        waitFor("ثلاثية غرناطة")
+        shot("33-admin-books")
+        tap("«ثلاثية غرناطة»")
+        waitFor("العنوان الرسمي")
+        shot("34-admin-book-editor")
+        tap("حفظ")
+        tap("الإعلانات")
+        waitFor("فهرس الكتب صار موحّداً")
+        shot("37-admin-news")
+        tap("المستخدمون")
+        waitFor("khalid@gmail.com")
+        shot("35-admin-users")
+        tap("خالد")
+        waitFor("إيقاف الحساب")
+        shot("36-admin-user")
+    }
+
+    @Test
     fun admin() {
         val admin = Account("u_admin", ADMIN_EMAIL, "الإدارة", false)
         backend.profiles["u_admin"] = Profile("الإدارة")
@@ -170,8 +270,9 @@ class ScreensTest {
         waitFor("مجموعاتي")
         tap("أنا")
         tap("لوحة إدارة المنصة")
-        waitFor("الحسابات")
+        waitFor("كتاب في الفهرس")
         shot("13-admin")
+        tap("المجموعات")
         tap("نادي كتاب الحي")
         waitFor("نقرأ الآن")
         shot("14-admin-opened-group")

@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -24,6 +25,8 @@ data class Settings(
     val reminderMinute: Int = 0,
     /** Epoch millis when the reading timer started, or null when it isn't running. */
     val timerStartedAt: Long? = null,
+    /** Announcements the reader has closed. */
+    val dismissed: Set<String> = emptySet(),
 )
 
 class Prefs(private val context: Context) {
@@ -33,6 +36,7 @@ class Prefs(private val context: Context) {
         val reminderH = intPreferencesKey("reminder_h")
         val reminderM = intPreferencesKey("reminder_m")
         val timer = longPreferencesKey("timer_started_at")
+        val dismissed = stringSetPreferencesKey("dismissed_announcements")
     }
 
     val settings: Flow<Settings> = context.store.data.map { p -> p.toSettings() }
@@ -45,6 +49,7 @@ class Prefs(private val context: Context) {
         reminderHour = this[K.reminderH] ?: 21,
         reminderMinute = this[K.reminderM] ?: 0,
         timerStartedAt = this[K.timer],
+        dismissed = this[K.dismissed].orEmpty(),
     )
 
     suspend fun setTheme(t: ThemeMode) { context.store.edit { it[K.theme] = t.name } }
@@ -52,6 +57,8 @@ class Prefs(private val context: Context) {
     suspend fun setReminder(enabled: Boolean, hour: Int, minute: Int) {
         context.store.edit { it[K.reminderOn] = enabled; it[K.reminderH] = hour; it[K.reminderM] = minute }
     }
+
+    suspend fun dismiss(id: String) { context.store.edit { it[K.dismissed] = it[K.dismissed].orEmpty() + id } }
 
     suspend fun setTimer(startedAt: Long?) {
         context.store.edit { if (startedAt == null) it.remove(K.timer) else it[K.timer] = startedAt }

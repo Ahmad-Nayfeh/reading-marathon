@@ -25,6 +25,13 @@ import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.WriteBatch
 import com.readingmarathon.core.BookBrief
 import com.readingmarathon.core.Challenge
+import com.readingmarathon.core.Text
+import com.readingmarathon.core.SuggestionType
+import com.readingmarathon.core.SuggestionStatus
+import com.readingmarathon.core.Suggestion
+import com.readingmarathon.core.CatalogBook
+import com.readingmarathon.core.Catalog
+import com.readingmarathon.core.BookStatus
 import com.readingmarathon.core.ChallengeStatus
 import com.readingmarathon.core.CsvImport
 import com.readingmarathon.core.Day
@@ -63,6 +70,11 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
     override val days: StateFlow<List<Day>> = _days
     private val _groups = MutableStateFlow<Map<String, GroupData>>(emptyMap())
     override val groups: StateFlow<Map<String, GroupData>> = _groups
+
+    private val _announcements = MutableStateFlow<List<Announcement>>(emptyList())
+    override val announcements: StateFlow<List<Announcement>> = _announcements
+    private val _banned = MutableStateFlow(false)
+    override val banned: StateFlow<Boolean> = _banned
 
     private var uidLoaded: String? = null
     private val userListeners = mutableListOf<ListenerRegistration>()
@@ -104,6 +116,8 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         _profile.value = null
         _days.value = emptyList()
         _groups.value = emptyMap()
+        _announcements.value = emptyList()
+        _banned.value = false
         uidLoaded = uid
         val db = db ?: return
         if (uid == null) return
@@ -124,6 +138,13 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
                 if (err != null) { Log.w(TAG, "days", err); return@addSnapshotListener }
                 if (s != null) _days.value = s.documents.mapNotNull { d -> runCatching { Docs.day(d.data.orEmpty()) }.getOrNull() }
             }
+        userListeners += db.collection("banned").document(uid).addSnapshotListener { snap, _ ->
+            if (snap != null && !snap.metadata.isFromCache) _banned.value = snap.exists()
+        }
+        userListeners += db.collection("announcements").whereEqualTo("active", true).addSnapshotListener { s, err ->
+            if (err != null) { Log.w(TAG, "announcements", err); return@addSnapshotListener }
+            if (s != null) _announcements.value = s.documents.map { Docs.announcement(it.id, it.data.orEmpty()) }.sortedByDescending { it.createdAt }
+        }
     }
 
     /** Watches exactly the reader's groups plus any peeked ones. */
@@ -611,6 +632,9 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         val daysQ = async { db.collectionGroup("days").get().await() }
         val challengesQ = async { db.collectionGroup("challenges").get().await() }
         val finishesQ = async { db.collectionGroup("finishes").get().await() }
+        val booksQ = async { db.collection("books").get().await() }
+        val openQ = async { db.collection("suggestions").whereEqualTo("status", "open").get().await() }
+        val bannedQ = async { db.collection("banned").get().await() }
 
         val today = today()
         val weekAgo = today.minusDays(6).toString()
@@ -637,7 +661,12 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         val entries = entriesQ.await().documents.map { Row(parentId(it.reference), it.getString("date").orEmpty(), it.getLong("minutes") ?: 0) }
         val entriesBy = entries.groupBy { it.owner }
         val members = membersQ.await().documents.groupBy { parentId(it.reference) }
-        val challenges = challengesQ.await().documents.groupingBy { parentId(it.reference) }.eachCount()
+        val challengeDocs = challengesQ.await().documents
+        val challenges = challengeDocs.groupingBy { parentId(it.reference) }.eachCount()
+        // Books chosen by the most groups (by catalog id when there is one, else by title).
+        val topBooks = challengeDocs.groupBy { it.getString("bookId") ?: Text.normalize(it.getString("title").orEmpty()) }
+            .map { (_, list) -> list.first().getString("title").orEmpty() to list.map { parentId(it.reference) }.distinct().size }
+            .sortedByDescending { it.second }.take(10)
 
         val groups = groupsQ.await().documents.map { d ->
             val g = Docs.group(d.id, d.data.orEmpty())
@@ -668,8 +697,262 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
             readingDays = days.count { it.minutes > 0 },
             finishedBooks = finishesQ.await().size(),
             daily = (0L until 30L).map { byDay[monthAgo.plusDays(it).toString()] ?: 0L },
+            activeReaders = (0L until 30L).map { off -> val d = monthAgo.plusDays(off).toString(); days.count { it.date == d && it.minutes > 0 } },
+            topBooks = topBooks,
+            catalogBooks = booksQ.await().documents.count { it.getString("status") != "merged" },
+            pendingBooks = booksQ.await().documents.count { it.getString("status") == "pending" },
+            openSuggestions = openQ.await().size(),
+            banned = bannedQ.await().documents.map { it.id }.toSet(),
         )
     }
+
+    private fun requireAdmin() { if (!isAdmin()) throw RuleViolation("هذا لمدير المنصة فقط.") }
+
+    /** Every admin change is written to the audit log (best effort). */
+    private fun log(action: String, target: String = "") {
+        db?.collection("adminLog")?.add(mapOf("at" to System.currentTimeMillis(), "action" to action, "target" to target))
+            ?.addOnFailureListener { Log.w(TAG, "log", it) }
+    }
+
+    override suspend fun adminBooks(): List<CatalogBook> {
+        requireAdmin()
+        return requireDb().collection("books").get().await().documents.map { Docs.book(it.id, it.data.orEmpty()) }.sortedBy { Text.normalize(it.title) }
+    }
+
+    /** Groups reading [bookId] get its current title and author. */
+    private suspend fun propagate(bookId: String, to: CatalogBook) {
+        val db = requireDb()
+        val writes = mutableListOf<(WriteBatch) -> Unit>()
+        db.collectionGroup("challenges").get().await().documents.filter { it.getString("bookId") == bookId }.forEach { d ->
+            writes += { b -> b.update(d.reference, mapOf("bookId" to to.id, "title" to to.title, "author" to to.author)) }
+        }
+        db.collection("groups").get().await().documents.forEach { g ->
+            val brief = Docs.brief(g.get("current"))
+            if (brief?.bookId == bookId) writes += { b -> b.update(g.reference, "current", Docs.briefMap(brief.copy(title = to.title, author = to.author, bookId = to.id))) }
+        }
+        commitAll(writes)
+    }
+
+    override suspend fun adminSaveBook(book: CatalogBook): CatalogBook {
+        requireAdmin()
+        Catalog.validate(book.title, book.author)
+        val db = requireDb()
+        val b = book.copy(
+            id = book.id.ifBlank { Ids.newId("b_") },
+            title = book.title.trim(), author = book.author.trim(),
+            aliases = book.aliases.map { it.trim() }.filter { it.isNotEmpty() && Text.normalize(it) != Text.normalize(book.title) }.distinctBy { Text.normalize(it) },
+            status = if (book.status == BookStatus.MERGED) BookStatus.MERGED else BookStatus.VERIFIED,
+            createdBy = book.createdBy ?: uid(), createdAt = book.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis(),
+        )
+        db.collection("books").document(b.id).set(Docs.bookMap(b)).await()
+        if (book.id.isNotBlank()) propagate(b.id, b)
+        log(if (book.id.isBlank()) "أضاف كتاباً" else "عدّل كتاباً", "«${b.title}» · ${b.author}")
+        return b
+    }
+
+    override suspend fun adminDeleteBook(id: String) {
+        requireAdmin()
+        val db = requireDb()
+        val b = db.collection("books").document(id).get().await()
+        db.collection("books").document(id).delete().await()
+        log("حذف كتاباً", "«${b.getString("title").orEmpty()}»")
+    }
+
+    override suspend fun adminMergeBooks(fromId: String, intoId: String) {
+        requireAdmin()
+        if (fromId == intoId) throw RuleViolation("اختر كتاباً آخر.")
+        val db = requireDb()
+        val from = db.collection("books").document(fromId).get().await().let { Docs.book(it.id, it.data ?: throw RuleViolation("الكتاب غير موجود.")) }
+        val into = db.collection("books").document(intoId).get().await().let { Docs.book(it.id, it.data ?: throw RuleViolation("الكتاب غير موجود.")) }
+        val kept = into.copy(aliases = Catalog.mergedAliases(into, from))
+        db.batch()
+            .set(db.collection("books").document(intoId), Docs.bookMap(kept))
+            .set(db.collection("books").document(fromId), Docs.bookMap(from.copy(status = BookStatus.MERGED, mergedInto = intoId)))
+            .commit().await()
+        propagate(fromId, kept)
+        log("دمج كتابين", "«${from.title}» ← «${into.title}»")
+    }
+
+    override suspend fun adminImportBooks(books: List<CatalogBook>): Int {
+        requireAdmin()
+        val existing = adminBooks().toMutableList()
+        val now = System.currentTimeMillis()
+        val writes = mutableListOf<(WriteBatch) -> Unit>()
+        var added = 0
+        for (x in books) {
+            if (Catalog.findSame(x.title, x.author, existing) != null) continue
+            val b = x.copy(id = Ids.newId("b_"), status = BookStatus.VERIFIED, createdBy = uid(), createdAt = now)
+            existing += b
+            added++
+            writes += { batch -> batch.set(requireDb().collection("books").document(b.id), Docs.bookMap(b)) }
+        }
+        commitAll(writes)
+        log("استورد قائمة كتب", "$added كتاباً")
+        return added
+    }
+
+    override suspend fun adminSuggestions(): List<Suggestion> {
+        requireAdmin()
+        return requireDb().collection("suggestions").get().await().documents.map { Docs.suggestion(it.id, it.data.orEmpty()) }
+            .sortedWith(compareBy<Suggestion> { it.status != SuggestionStatus.OPEN }.thenByDescending { it.createdAt })
+    }
+
+    override suspend fun adminResolve(id: String, accepted: Boolean, reply: String) {
+        requireAdmin()
+        val db = requireDb()
+        val sg = db.collection("suggestions").document(id).get().await().let { Docs.suggestion(it.id, it.data ?: throw RuleViolation("الاقتراح غير موجود.")) }
+        if (accepted) when (sg.type) {
+            // A new book becomes a verified one (the admin edits it first if needed).
+            SuggestionType.NEW_BOOK -> sg.bookId?.let { bid ->
+                val b = db.collection("books").document(bid).get().await()
+                if (b.exists()) db.collection("books").document(bid).update("status", "verified").await()
+            }
+            SuggestionType.DUPLICATE -> {
+                val from = sg.bookId
+                val into = sg.otherBookId
+                if (from != null && into != null) adminMergeBooks(from, into)
+            }
+            // A fix is applied by editing the book; accepting records it.
+            SuggestionType.FIX -> Unit
+        }
+        db.collection("suggestions").document(id)
+            .update(mapOf("status" to if (accepted) "accepted" else "rejected", "reply" to reply.trim(), "resolvedAt" to System.currentTimeMillis())).await()
+        log(if (accepted) "قبل اقتراحاً" else "رفض اقتراحاً", "«${sg.title}» من ${sg.byName}")
+    }
+
+    override suspend fun adminUser(uid: String): AdminUserDetail = coroutineScope {
+        requireAdmin()
+        val db = requireDb()
+        val profile = async { db.collection("users").document(uid).get().await() }
+        val days = async { db.collection("users").document(uid).collection("days").get().await() }
+        val ban = async { db.collection("banned").document(uid).get().await() }
+        val p = profile.await()
+        val ds = days.await().documents.mapNotNull { runCatching { Docs.day(it.data.orEmpty()) }.getOrNull() }.sortedByDescending { it.date }
+        val gids = (p.get("groups") as? List<*>)?.filterIsInstance<String>().orEmpty()
+        val names = gids.map { gid -> async { gid to (runCatching { db.collection("groups").document(gid).get().await().getString("name") }.getOrNull() ?: "مجموعة محذوفة") } }.map { it.await() }
+        AdminUserDetail(
+            user = AdminUser(uid, p.getString("email"), p.getString("name"), p.getBoolean("guest") ?: false, p.getLong("createdAt") ?: 0, p.getLong("lastSeen") ?: 0, gids.size, ds.sumOf { it.minutes.toLong() }),
+            goal = (p.getLong("goal") ?: 30).toInt(),
+            days = ds,
+            groups = names,
+            banned = ban.await().exists(),
+        )
+    }
+
+    override suspend fun adminRenameUser(uid: String, name: String) {
+        requireAdmin()
+        Validation.personName(name)
+        val db = requireDb()
+        val gids = (db.collection("users").document(uid).get().await().get("groups") as? List<*>)?.filterIsInstance<String>().orEmpty()
+        val batch = db.batch().update(db.collection("users").document(uid), "name", name.trim())
+        gids.forEach { gid -> batch.set(groupRef(gid).collection("members").document(uid), mapOf("name" to name.trim()), SetOptions.merge()) }
+        batch.commit().await()
+        log("غيّر اسم حساب", name.trim())
+    }
+
+    override suspend fun adminSetBanned(uid: String, banned: Boolean) {
+        requireAdmin()
+        if (uid == uid()) throw RuleViolation("لا يمكنك إيقاف حسابك.")
+        val ref = requireDb().collection("banned").document(uid)
+        if (banned) ref.set(mapOf("at" to System.currentTimeMillis())).await() else ref.delete().await()
+        log(if (banned) "أوقف حساباً" else "أعاد تفعيل حساب", uid)
+    }
+
+    override suspend fun adminDeleteUserData(uid: String) {
+        requireAdmin()
+        if (uid == uid()) throw RuleViolation("لا يمكنك حذف بيانات حسابك من هنا.")
+        val db = requireDb()
+        val user = db.collection("users").document(uid)
+        val gids = (user.get().await().get("groups") as? List<*>)?.filterIsInstance<String>().orEmpty()
+        val writes = mutableListOf<(WriteBatch) -> Unit>()
+        user.collection("days").get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+        for (gid in gids) {
+            val g = groupRef(gid)
+            val snap = runCatching { g.get().await() }.getOrNull() ?: continue
+            if (!snap.exists()) continue
+            if (Docs.group(gid, snap.data.orEmpty()).roleOf(uid) == Role.OWNER) {
+                throw RuleViolation("هذا الحساب يملك «${snap.getString("name")}». انقل ملكيتها أو احذفها أولاً.")
+            }
+            writes += { b -> b.update(g, "roles.$uid", FieldValue.delete()) }
+            writes += { b -> b.delete(g.collection("members").document(uid)) }
+            g.collection("entries").whereEqualTo("memberId", uid).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+            g.collection("finishes").whereEqualTo("memberId", uid).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+        }
+        writes += { b -> b.delete(user) }
+        commitAll(writes)
+        log("حذف بيانات حساب", uid)
+    }
+
+    override suspend fun adminAnnouncements(): List<Announcement> {
+        requireAdmin()
+        return requireDb().collection("announcements").get().await().documents.map { Docs.announcement(it.id, it.data.orEmpty()) }.sortedByDescending { it.createdAt }
+    }
+
+    override suspend fun adminSaveAnnouncement(a: Announcement) {
+        requireAdmin()
+        if (a.title.isBlank() && a.body.isBlank()) throw RuleViolation("اكتب نص الإعلان.")
+        val id = a.id.ifBlank { Ids.newId("a_") }
+        requireDb().collection("announcements").document(id)
+            .set(mapOf("title" to a.title.trim(), "body" to a.body.trim(), "active" to a.active, "createdAt" to a.createdAt.takeIf { it > 0 }.let { it ?: System.currentTimeMillis() })).await()
+        log(if (a.id.isBlank()) "نشر إعلاناً" else "عدّل إعلاناً", a.title.ifBlank { a.body.take(40) })
+    }
+
+    override suspend fun adminDeleteAnnouncement(id: String) {
+        requireAdmin()
+        requireDb().collection("announcements").document(id).delete().await()
+        log("حذف إعلاناً", id)
+    }
+
+    override suspend fun adminLog(): List<LogEntry> {
+        requireAdmin()
+        return requireDb().collection("adminLog").orderBy("at", com.google.firebase.firestore.Query.Direction.DESCENDING).limit(200).get().await()
+            .documents.map { LogEntry(it.id, it.getLong("at") ?: 0, it.getString("action").orEmpty(), it.getString("target").orEmpty()) }
+    }
+
+    // ---- Book catalog ----
+
+    override suspend fun searchBooks(query: String): List<CatalogBook> {
+        val key = Catalog.queryKey(query) ?: return emptyList()
+        val found = requireDb().collection("books").whereArrayContains("keys", key).limit(40).get().await()
+            .documents.map { Docs.book(it.id, it.data.orEmpty()) }
+        return Catalog.rank(query, found).take(20)
+    }
+
+    override suspend fun book(id: String): CatalogBook? =
+        requireDb().collection("books").document(id).get().await().takeIf { it.exists() }?.let { Docs.book(it.id, it.data.orEmpty()) }
+
+    override suspend fun proposeBook(title: String, author: String, pages: Int?): CatalogBook {
+        Catalog.validate(title, author)
+        val me = uid()
+        val db = requireDb()
+        // Already there under this title or another name of it? Use that one.
+        Catalog.findSame(title, author, searchBooks(title))?.let { return it }
+        val b = CatalogBook(Ids.newId("b_"), title.trim(), author.trim(), pages = pages, status = BookStatus.PENDING, createdBy = me, createdAt = System.currentTimeMillis())
+        val sid = Ids.newId("s_")
+        db.batch()
+            .set(db.collection("books").document(b.id), Docs.bookMap(b))
+            .set(
+                db.collection("suggestions").document(sid),
+                Docs.suggestionMap(Suggestion(sid, SuggestionType.NEW_BOOK, b.id, title = b.title, author = b.author, by = me, byName = _profile.value?.name.orEmpty(), createdAt = b.createdAt)),
+            )
+            .commit().await()
+        return b
+    }
+
+    override suspend fun suggest(suggestion: Suggestion) {
+        val me = uid()
+        if (suggestion.type == SuggestionType.FIX && suggestion.title.isBlank() && suggestion.author.isBlank() && suggestion.note.isBlank()) {
+            throw RuleViolation("اكتب التصحيح المقترح.")
+        }
+        if (suggestion.note.length > 500) throw RuleViolation("الملاحظة طويلة جداً.")
+        val id = Ids.newId("s_")
+        requireDb().collection("suggestions").document(id)
+            .set(Docs.suggestionMap(suggestion.copy(id = id, by = me, byName = _profile.value?.name.orEmpty(), status = SuggestionStatus.OPEN, createdAt = System.currentTimeMillis()))).await()
+    }
+
+    override suspend fun mySuggestions(): List<Suggestion> =
+        requireDb().collection("suggestions").whereEqualTo("by", uid()).get().await().documents
+            .map { Docs.suggestion(it.id, it.data.orEmpty()) }.sortedByDescending { it.createdAt }
 
     private companion object {
         const val TAG = "Marathon"

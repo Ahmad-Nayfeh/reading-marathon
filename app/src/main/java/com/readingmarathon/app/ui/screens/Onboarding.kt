@@ -288,3 +288,25 @@ fun LoadingScreen() {
         }
     }
 }
+
+/** The platform admin suspended this account. */
+@Composable
+fun BannedScreen() {
+    val vm = LocalVm.current
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(28.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Emblem(64)
+        Spacer(Modifier.height(20.dp))
+        Text("هذا الحساب موقوف", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "إن ظننت أن هذا خطأ فراسلنا على readingmarathon.admin@gmail.com.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = vm::signOut) { Text("تسجيل الخروج") }
+    }
+}

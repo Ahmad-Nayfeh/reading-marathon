@@ -33,6 +33,8 @@ data class Challenge(
     val book: Book,
     val start: LocalDate,
     val end: LocalDate,
+    /** The catalog entry; the title and author above are a copy of it. */
+    val bookId: String? = null,
 ) {
     fun contains(date: LocalDate): Boolean = !date.isBefore(start) && !date.isAfter(end)
     val lengthDays: Int get() = (end.toEpochDay() - start.toEpochDay() + 1).toInt()
@@ -54,7 +56,7 @@ data class Challenge(
 enum class ChallengeStatus { UPCOMING, ACTIVE, FINISHED }
 
 /** The current book as shown on a group card, kept on the group itself so lists need one read. */
-data class BookBrief(val title: String, val author: String, val start: LocalDate, val end: LocalDate)
+data class BookBrief(val title: String, val author: String, val start: LocalDate, val end: LocalDate, val bookId: String? = null)
 
 data class Group(
     val id: String,

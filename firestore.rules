@@ -8,7 +8,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() { return request.auth != null; }
+    // A suspended account (banned/{uid}) can do nothing at all.
+    function signedIn() { return request.auth != null && !exists(/databases/$(database)/documents/banned/$(request.auth.uid)); }
     function uid() { return request.auth.uid; }
     function isAdmin() {
       return signedIn()
@@ -28,6 +29,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if signedIn() && (uid() == userId || isAdmin());
       allow list: if isAdmin();
+      allow update: if isAdmin();
       allow create, update: if signedIn() && uid() == userId
                             && request.resource.data.keys().hasOnly(['email', 'name', 'guest', 'goal', 'groups', 'createdAt', 'lastSeen'])
                             && request.resource.data.get('email', null) == request.auth.token.get('email', null)
@@ -38,6 +40,7 @@ service cloud.firestore {
       // The reader's own log, one document per day.
       match /days/{date} {
         allow read: if signedIn() && uid() == userId;
+        allow delete: if isAdmin();
         allow write: if signedIn() && uid() == userId
                      && request.resource.data.keys().hasOnly(['date', 'minutes', 'updatedAt'])
                      && request.resource.data.date == date && validDate(date)
@@ -51,6 +54,51 @@ service cloud.firestore {
     match /{path=**}/challenges/{doc} { allow read: if isAdmin(); }
     match /{path=**}/entries/{doc} { allow read: if isAdmin(); }
     match /{path=**}/finishes/{doc} { allow read: if isAdmin(); }
+
+    // The shared book catalog: everyone reads it; a reader may add a book only as "pending" (the
+    // admin reviews it); everything else is the platform admin's.
+    match /books/{bid} {
+      allow read: if signedIn();
+      allow create: if isAdmin()
+                    || (signedIn()
+                        && request.resource.data.keys().hasOnly(['title', 'author', 'aliases', 'keys', 'pages', 'status', 'mergedInto', 'createdBy', 'createdAt'])
+                        && request.resource.data.status == 'pending'
+                        && request.resource.data.createdBy == uid()
+                        && request.resource.data.mergedInto == null
+                        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 120
+                        && request.resource.data.author is string && request.resource.data.author.size() > 0 && request.resource.data.author.size() <= 120
+                        && request.resource.data.keys is list && request.resource.data.keys.size() <= 400
+                        && request.resource.data.aliases is list && request.resource.data.aliases.size() == 0);
+      allow update, delete: if isAdmin();
+    }
+
+    // Suggestions: a reader files their own, and reads only their own; the admin resolves them.
+    match /suggestions/{sid} {
+      allow get: if isAdmin() || (signedIn() && resource.data.by == uid());
+      allow list: if isAdmin() || (signedIn() && resource.data.by == uid());
+      allow create: if signedIn()
+                    && request.resource.data.by == uid()
+                    && request.resource.data.status == 'open'
+                    && request.resource.data.type in ['new_book', 'fix', 'duplicate']
+                    && request.resource.data.reply == ''
+                    && request.resource.data.note is string && request.resource.data.note.size() <= 500;
+      allow update, delete: if isAdmin();
+    }
+
+    match /announcements/{aid} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Suspended accounts. The account itself may see that it is suspended.
+    match /banned/{userId} {
+      allow get: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      allow list, write: if isAdmin();
+    }
+
+    match /adminLog/{id} {
+      allow read, write: if isAdmin();
+    }
 
     // Invite codes map to a group. Readable one at a time (never listed), so codes can't be enumerated.
     match /invites/{code} {

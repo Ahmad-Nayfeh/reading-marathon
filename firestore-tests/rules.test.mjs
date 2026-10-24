@@ -140,6 +140,44 @@ await t('ali (new owner) hands it back', assertSucceeds(updateDoc(doc(ali, G), {
 await t('admin cannot delete... (only the owner or platform admin)', assertFails(deleteDoc(doc(ali, G))));
 await t('owner deletes the group', assertSucceeds(deleteDoc(doc(own, G))));
 
+// --- book catalog and suggestions
+const book = (o = {}) => ({ title: 'الأيام', author: 'طه حسين', aliases: [], keys: ['اي', 'ايام'], pages: null, status: 'pending', mergedInto: null, createdBy: 'ali', createdAt: 1, ...o });
+await t('admin adds a verified book', assertSucceeds(setDoc(doc(adm, 'books/b1'), book({ status: 'verified', createdBy: 'adm' }))));
+await t('reader reads the catalog', assertSucceeds(getDocs(query(collection(ali, 'books'), where('keys', 'array-contains', 'اي')))));
+await t('reader proposes a pending book', assertSucceeds(setDoc(doc(ali, 'books/b2'), book())));
+await t('reader cannot add a verified book', assertFails(setDoc(doc(ali, 'books/b3'), book({ status: 'verified' }))));
+await t('reader cannot add a book in someone else\'s name', assertFails(setDoc(doc(ali, 'books/b4'), book({ createdBy: 'own' }))));
+await t('reader cannot edit a book', assertFails(updateDoc(doc(ali, 'books/b1'), { author: 'x' })));
+await t('admin edits a book', assertSucceeds(updateDoc(doc(adm, 'books/b1'), { author: 'طه حسين' })));
+const sg = (o = {}) => ({ type: 'fix', bookId: 'b1', otherBookId: null, title: '', author: 'طه حسين', note: 'المؤلف خطأ', by: 'ali', byName: 'علي', status: 'open', createdAt: 1, resolvedAt: 0, reply: '', ...o });
+await t('reader files a suggestion', assertSucceeds(setDoc(doc(ali, 'suggestions/s1'), sg())));
+await t('reader cannot file as someone else', assertFails(setDoc(doc(ali, 'suggestions/s2'), sg({ by: 'own' }))));
+await t('reader cannot file an accepted suggestion', assertFails(setDoc(doc(ali, 'suggestions/s3'), sg({ status: 'accepted' }))));
+await t('reader lists own suggestions', assertSucceeds(getDocs(query(collection(ali, 'suggestions'), where('by', '==', 'ali')))));
+await t('reader cannot list all suggestions', assertFails(getDocs(collection(ali, 'suggestions'))));
+await t('reader cannot resolve', assertFails(updateDoc(doc(ali, 'suggestions/s1'), { status: 'accepted' })));
+await t('admin resolves', assertSucceeds(updateDoc(doc(adm, 'suggestions/s1'), { status: 'accepted', reply: 'شكراً' })));
+
+// --- announcements, audit log
+await t('admin posts an announcement', assertSucceeds(setDoc(doc(adm, 'announcements/a1'), { title: 'مرحباً', body: 'x', active: true, createdAt: 1 })));
+await t('reader reads announcements', assertSucceeds(getDocs(query(collection(ali, 'announcements'), where('active', '==', true)))));
+await t('reader cannot post', assertFails(setDoc(doc(ali, 'announcements/a2'), { title: 'x' })));
+await t('admin writes the log', assertSucceeds(setDoc(doc(adm, 'adminLog/l1'), { at: 1, action: 'x', target: '' })));
+await t('reader cannot read the log', assertFails(getDocs(collection(ali, 'adminLog'))));
+
+// --- users managed by the admin
+await t('admin renames a user', assertSucceeds(updateDoc(doc(adm, 'users/ali'), { name: 'علي محمد' })));
+await t('admin deletes a user\'s day', assertSucceeds(deleteDoc(doc(adm, 'users/ali/days/2026-10-20'))));
+
+// --- suspension
+await t('only the admin suspends', assertFails(setDoc(doc(ali, 'banned/eve'), { at: 1 })));
+await t('admin suspends eve', assertSucceeds(setDoc(doc(adm, 'banned/eve'), { at: 1 })));
+await t('eve sees she is suspended', assertSucceeds(getDoc(doc(eve, 'banned/eve'))));
+await t('suspended account cannot log', assertFails(setDoc(doc(eve, 'users/eve/days/2026-10-24'), { date: '2026-10-24', minutes: 10, updatedAt: 1 })));
+await t('suspended account cannot read the catalog', assertFails(getDocs(query(collection(eve, 'books'), where('keys', 'array-contains', 'اي')))));
+await t('admin lifts the suspension', assertSucceeds(deleteDoc(doc(adm, 'banned/eve'))));
+await t('eve logs again', assertSucceeds(setDoc(doc(eve, 'users/eve/days/2026-10-24'), { date: '2026-10-24', minutes: 10, updatedAt: 1 })));
+
 console.log(`\n${n - bad}/${n} passed`);
 await env.cleanup();
 process.exit(bad ? 1 : 0);

@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,7 @@ import com.readingmarathon.app.ui.components.PrimaryButton
 import com.readingmarathon.app.ui.components.SectionLabel
 import com.readingmarathon.app.ui.components.StatRow
 import com.readingmarathon.core.Book
+import com.readingmarathon.core.CatalogBook
 import com.readingmarathon.core.Challenge
 import com.readingmarathon.core.CsvImport
 import com.readingmarathon.core.Dates
@@ -64,8 +66,11 @@ fun ChallengeEditor(groupId: String, challengeId: String?) {
     val existing = challengeId?.let(d::challenge)
     // A new book starts the day after the last one ends (or today) and runs four weeks.
     val defaultStart = remember { d.timeline.lastOrNull()?.end?.plusDays(1)?.takeIf { it.isAfter(today) } ?: today }
-    var title by rememberSaveable { mutableStateOf(existing?.book?.title.orEmpty()) }
-    var author by rememberSaveable { mutableStateOf(existing?.book?.author.orEmpty()) }
+    // The book comes from the shared catalog; a challenge from before the catalog keeps its own title.
+    var picked by remember { mutableStateOf(existing?.let { CatalogBook(it.bookId.orEmpty(), it.book.title, it.book.author) }) }
+    LaunchedEffect(existing?.bookId) {
+        existing?.bookId?.let { id -> runCatching { vm.backend.book(id) }.getOrNull()?.let { picked = it } }
+    }
     var start by remember { mutableStateOf(existing?.start ?: defaultStart) }
     var end by remember { mutableStateOf(existing?.end ?: defaultStart.plusDays(27)) }
     var picking by remember { mutableStateOf<Int?>(null) }
@@ -77,9 +82,8 @@ fun ChallengeEditor(groupId: String, challengeId: String?) {
         subtitle = d.group.name,
         actions = { if (existing != null) IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Rounded.DeleteOutline, "حذف الكتاب") } },
     ) {
-        OutlinedTextField(title, { title = it.take(Limits.MAX_TITLE) }, label = { Text("عنوان الكتاب") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(author, { author = it.take(Limits.MAX_TITLE) }, label = { Text("المؤلف (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        SectionLabel("الكتاب")
+        BookPicker(picked, onSelect = { picked = it })
         SectionLabel("المدة")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GhostButton("من ${Dates.short(start)}", onClick = { picking = 0 }, icon = Icons.Rounded.CalendarMonth, modifier = Modifier.weight(1f))
@@ -101,8 +105,9 @@ fun ChallengeEditor(groupId: String, challengeId: String?) {
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(28.dp))
-        PrimaryButton(if (existing == null) "أضف الكتاب" else "حفظ", busy = busy, enabled = title.isNotBlank(), onClick = {
-            val c = Challenge(existing?.id ?: Ids.newId("c_"), Book(title, author), start, end)
+        PrimaryButton(if (existing == null) "أضف الكتاب" else "حفظ", busy = busy, enabled = picked != null, onClick = {
+            val b = picked ?: return@PrimaryButton
+            val c = Challenge(existing?.id ?: Ids.newId("c_"), Book(b.title, b.author), start, end, bookId = b.id.ifBlank { null })
             vm.run(if (existing == null) "أُضيف الكتاب." else "حُفظ الكتاب.", then = nav::back) { vm.backend.saveChallenge(groupId, c) }
         })
     }
