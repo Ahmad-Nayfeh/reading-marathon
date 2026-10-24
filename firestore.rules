@@ -1,15 +1,19 @@
 rules_version = '2';
 
-// Every reader signs in (Google or guest). A reader's own log (users/{uid}/days) is private.
+// Every reader signs in with Google (guest accounts are refused). A reader's own log is private.
 // Groups: access comes from the group's `roles` map {uid: "owner" | "admin" | "member"}.
-// Members write only their own reading; owners and admins manage the group. The platform admin
+// Every reader writes only their own reading, nobody else's; owners and admins manage the group. The platform admin
 // (one verified Google account) can read and manage everything.
 // Paste into Firebase console → Firestore → Rules → Publish.
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // A suspended account (banned/{uid}) can do nothing at all.
-    function signedIn() { return request.auth != null && !exists(/databases/$(database)/documents/banned/$(request.auth.uid)); }
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.get('firebase', {}).get('sign_in_provider', '') != 'anonymous'
+        && !exists(/databases/$(database)/documents/banned/$(request.auth.uid));
+    }
     function uid() { return request.auth.uid; }
     function isAdmin() {
       return signedIn()
@@ -31,11 +35,13 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow update: if isAdmin();
       allow create, update: if signedIn() && uid() == userId
-                            && request.resource.data.keys().hasOnly(['email', 'name', 'guest', 'goal', 'groups', 'createdAt', 'lastSeen'])
+                            && request.resource.data.keys().hasOnly(['email', 'name', 'guest', 'goal', 'groups', 'joined', 'createdAt', 'lastSeen'])
                             && request.resource.data.get('email', null) == request.auth.token.get('email', null)
                             && (!('name' in request.resource.data) || validName(request.resource.data.name))
-                            && (!('groups' in request.resource.data) || (request.resource.data.groups is list && request.resource.data.groups.size() <= 20));
-      allow delete: if isAdmin();
+                            && (!('groups' in request.resource.data) || (request.resource.data.groups is list && request.resource.data.groups.size() <= 20))
+                            && (!('joined' in request.resource.data) || (request.resource.data.joined is list && request.resource.data.joined.size() <= 500));
+      // The reader may delete their own account; the admin may delete any.
+      allow delete: if isAdmin() || (signedIn() && uid() == userId);
 
       // Minutes per book per day (the day documents below hold the totals).
       match /reads/{rid} {
@@ -62,8 +68,8 @@ service cloud.firestore {
       // The reader's own log, one document per day.
       match /days/{date} {
         allow read: if signedIn() && uid() == userId;
-        allow delete: if isAdmin();
-        allow write: if signedIn() && uid() == userId
+        allow delete: if isAdmin() || (signedIn() && uid() == userId);
+        allow create, update: if signedIn() && uid() == userId
                      && request.resource.data.keys().hasOnly(['date', 'minutes', 'updatedAt'])
                      && request.resource.data.date == date && validDate(date)
                      && validMinutes(request.resource.data.minutes);
@@ -106,7 +112,8 @@ service cloud.firestore {
                     && request.resource.data.type in ['new_book', 'fix', 'duplicate']
                     && request.resource.data.reply == ''
                     && request.resource.data.note is string && request.resource.data.note.size() <= 500;
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (signedIn() && resource.data.by == uid());
     }
 
     match /announcements/{aid} {
@@ -171,23 +178,31 @@ service cloud.firestore {
             && !(uid() in request.resource.data.roles));
       allow delete: if isOwner(gid);
 
+      // Every member document is the account itself (id = uid). Only the platform admin edits others' (renaming).
       match /members/{mid} {
-        allow read: if isMember(gid);
-        allow create, update: if isManager(gid)
+        allow read: if isMember(gid) || (signedIn() && mid == uid());
+        allow create, update: if isAdmin()
+          // Managers may only mark a member as removed.
+          || (isManager(gid) && resource != null
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active'])
+              && request.resource.data.active == false)
           || (signedIn() && mid == uid()
               && request.resource.data.keys().hasOnly(['name', 'linkedUid', 'active', 'joinedAt', 'code'])
               && request.resource.data.linkedUid == uid()
               && validName(request.resource.data.name)
               && request.resource.data.active is bool
               && (
+                // The owner's own member document, right after creating the group.
+                (roleIn(gid) == 'owner' && resource == null && request.resource.data.active == true)
                 // Already in the group: rename yourself, or mark yourself gone when leaving.
-                (roleIn(gid) != null && request.resource.data.diff(resource == null ? {} : resource.data).affectedKeys().hasOnly(['name', 'active']))
+                || (roleIn(gid) != null && request.resource.data.diff(resource == null ? {} : resource.data).affectedKeys().hasOnly(['name', 'active']))
                 // Joining: the group is public, or you hold its current invite code.
                 || (getAfter(groupPath(gid)).data.roles.get(uid(), null) == 'member'
                     && request.resource.data.active == true
                     && (get(groupPath(gid)).data.visibility == 'public'
                         || request.resource.data.get('code', '') == get(groupPath(gid)).data.inviteCode))));
-        allow delete: if isManager(gid);
+        // Removing a member marks them inactive; deleting the document is for account deletion.
+        allow delete: if isOwner(gid) || (signedIn() && mid == uid());
       }
 
       match /challenges/{cid} {
@@ -198,8 +213,10 @@ service cloud.firestore {
                              && validDate(request.resource.data.start) && validDate(request.resource.data.end)));
       }
 
+      // Reading and finishes: each reader writes only their own. They can also find and delete their
+      // own after leaving the group (account deletion).
       match /entries/{eid} {
-        allow read: if isMember(gid);
+        allow read: if isMember(gid) || (signedIn() && resource.data.memberId == uid());
         allow create, update: if isMember(gid)
                               && request.resource.data.keys().hasOnly(['memberId', 'date', 'minutes', 'updatedAt', 'sharedMinutes'])
                               && request.resource.data.get('sharedMinutes', 0) is int
@@ -208,18 +225,19 @@ service cloud.firestore {
                               && eid == request.resource.data.memberId + '_' + request.resource.data.date
                               && validDate(request.resource.data.date)
                               && validMinutes(request.resource.data.minutes)
-                              && (request.resource.data.memberId == uid() || isManager(gid));
-        allow delete: if isManager(gid) || (isMember(gid) && resource.data.memberId == uid());
+                              && request.resource.data.memberId == uid();
+        // Others' reading is deleted only with the whole group.
+        allow delete: if isOwner(gid) || (signedIn() && resource.data.memberId == uid());
       }
 
       match /finishes/{fid} {
-        allow read: if isMember(gid);
+        allow read: if isMember(gid) || (signedIn() && resource.data.memberId == uid());
         allow create, update: if isMember(gid)
                               && request.resource.data.keys().hasOnly(['memberId', 'challengeId', 'date'])
                               && fid == request.resource.data.memberId + '_' + request.resource.data.challengeId
                               && validDate(request.resource.data.date)
-                              && (request.resource.data.memberId == uid() || isManager(gid));
-        allow delete: if isManager(gid) || (isMember(gid) && resource.data.memberId == uid());
+                              && request.resource.data.memberId == uid();
+        allow delete: if isManager(gid) || (signedIn() && resource.data.memberId == uid());
       }
     }
   }

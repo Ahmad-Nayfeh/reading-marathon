@@ -102,11 +102,10 @@ internal fun Loading() {
 
 @Composable
 private fun Overview(o: AdminOverview) {
-    val guests = o.users.count { it.isGuest }
     val week = System.currentTimeMillis() - 7 * 86_400_000L
     PaperCard {
         StatRow(
-            "${o.users.size}" to "حساب · $guests دون Google",
+            "${o.users.size}" to "حساب",
             "${o.users.count { it.lastSeen > week }}" to "دخلوا هذا الأسبوع",
             "${o.groups.size}" to "مجموعة · ${o.groups.count { it.minutesLast7 > 0 }} نشطة",
         )

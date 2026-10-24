@@ -197,8 +197,32 @@ class ScreensTest {
     }
 
     @Test
+    fun account() {
+        backend.signIn(sara)
+        waitFor("مجموعاتي")
+        val data = kotlinx.coroutines.runBlocking { backend.exportMyData() }
+        check("التاريخ,الكتاب,المؤلف,الدقائق" in data.reads && "رجال في الشمس" in data.reads) { data.reads }
+        check("الأيام" in data.shelf) { data.shelf }
+        tap("أنا")
+        tap("حذف حسابي")
+        waitFor("حذف حسابك نهائياً؟")
+        shot("18-delete-account")
+        tap("احذف نهائياً")
+        waitFor("الدخول بحساب Google")
+        check(backend.profiles["u_sara"] == null && backend.all.values.none { "u_sara" in it.group.roles })
+    }
+
+    @Test
+    fun oldGuestMustLink() {
+        backend.profiles["u_old"] = Profile("ضيف قديم")
+        backend.signIn(Account("u_old", null, null, isGuest = true))
+        waitFor("ربط حساب Google")
+        shot("19-guest-link")
+    }
+
+    @Test
     fun newReader() {
-        backend.signIn(Account("u_new", null, null, isGuest = true))
+        backend.signIn(Account("u_new", "new@gmail.com", null, isGuest = false))
         waitFor("أهلاً بك")
         shot("12-name")
     }
@@ -224,7 +248,7 @@ class ScreensTest {
     @Test
     fun firstBook() {
         backend.profiles["u_new"] = Profile("أمجد")
-        backend.signIn(Account("u_new", null, null, isGuest = true))
+        backend.signIn(Account("u_new", "new@gmail.com", null, isGuest = false))
         waitFor("ماذا تقرأ الآن؟")
         shot("40-first-home")
         tap("اختر كتاباً")
@@ -254,7 +278,7 @@ class ScreensTest {
     @Config(qualifiers = "+night")
     fun dark() {
         shot("20-dark-sign-in")
-        backend.signIn(Account("u_new", null, null, isGuest = true))
+        backend.signIn(Account("u_new", "new@gmail.com", null, isGuest = false))
         waitFor("أهلاً بك")
         shot("21-dark-name")
         scenario.close()

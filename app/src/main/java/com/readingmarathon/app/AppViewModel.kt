@@ -116,7 +116,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Account ----
 
     fun signInWithGoogle(activity: Activity) = run { backend.signInWithGoogle(activity) }
-    fun signInAsGuest() = run { backend.signInAsGuest() }
+
+    fun deleteAccount(activity: Activity) = run("حُذف حسابك وكل بياناته.") {
+        cancelTimer()
+        backend.deleteAccount(activity)
+    }
 
     fun signOut() = run {
         cancelTimer()

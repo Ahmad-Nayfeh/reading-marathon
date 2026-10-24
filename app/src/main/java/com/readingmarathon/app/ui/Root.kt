@@ -65,7 +65,8 @@ fun MarathonRoot(vm: AppViewModel) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 val stage = when {
                     restoring -> Stage.SPLASH
-                    account == null -> Stage.SIGN_IN
+                    // An old guest account must link Google first; linking keeps its data.
+                    account == null || account?.isGuest == true -> Stage.SIGN_IN
                     banned -> Stage.BANNED
                     profile == null -> Stage.LOADING
                     profile?.name.isNullOrBlank() -> Stage.NAME
@@ -74,7 +75,7 @@ fun MarathonRoot(vm: AppViewModel) {
                 AnimatedContent(stage, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "stage") { s ->
                     when (s) {
                         Stage.SPLASH -> Splash()
-                        Stage.SIGN_IN -> SignInScreen()
+                        Stage.SIGN_IN -> SignInScreen(guest = account?.isGuest == true)
                         Stage.BANNED -> BannedScreen()
                         Stage.LOADING -> LoadingScreen()
                         Stage.NAME -> NameScreen()

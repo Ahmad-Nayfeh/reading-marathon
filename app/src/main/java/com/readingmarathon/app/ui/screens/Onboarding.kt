@@ -101,9 +101,9 @@ fun Emblem(sizeDp: Int) {
     }
 }
 
-/** First screen: sign in with Google, or continue as a guest. */
+/** First screen: sign in with Google. An old guest account links Google here and keeps its data. */
 @Composable
-fun SignInScreen() {
+fun SignInScreen(guest: Boolean = false) {
     val vm = LocalVm.current
     val busy by vm.busy.collectAsStateWithLifecycle()
     val activity = LocalContext.current as? Activity
@@ -123,11 +123,13 @@ fun SignInScreen() {
         Text("ماراثون القراءة", style = MaterialTheme.typography.displaySmall, textAlign = TextAlign.Center)
         GoldRule(Modifier.padding(vertical = 12.dp), width = 44.dp)
         Text(
-            "اقرأ كل يوم، وسجّل دقائقك بلمسة واحدة، ونافس أصدقاءك على كتاب واحد.",
+            if (guest) "صار الدخول بحساب Google ضرورياً، لتبقى قراءتك محفوظة ولا تضيع إن غيّرت هاتفك. اربط حسابك وستبقى كل بياناتك كما هي."
+            else "اختر كتابك، وسجّل وقتك فيه بلمسة، وحدك أو مع أصدقائك.",
             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(28.dp))
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Point("رفّ لكتبك، ووقتك في كل كتاب.")
             Point("سجّل قراءتك بلمسة، أو بمؤقت، أو من الإشعار.")
             Point("مجموعات للأصدقاء والعائلة ونوادي القراءة.")
             Point("كتاب مشترك، وترتيب، واحتفال بكل كتاب يُختم.")
@@ -152,15 +154,12 @@ fun SignInScreen() {
                 } else {
                     GoogleMark()
                     Spacer(Modifier.width(12.dp))
-                    Text("الدخول بحساب Google", style = MaterialTheme.typography.labelLarge)
+                    Text(if (guest) "ربط حساب Google" else "الدخول بحساب Google", style = MaterialTheme.typography.labelLarge)
                 }
             }
-            Spacer(Modifier.height(6.dp))
-            TextButton(onClick = vm::signInAsGuest, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Text("المتابعة دون حساب", color = MaterialTheme.colorScheme.onSurface)
-            }
+            Spacer(Modifier.height(10.dp))
             Text(
-                "يمكنك ربط حساب Google لاحقاً دون أن تخسر شيئاً.",
+                "حسابك يحفظ قراءتك، فتجدها على أي هاتف تدخل منه.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall,
             )
         }

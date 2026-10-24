@@ -24,10 +24,6 @@ object Checks {
 
     fun challenge(d: GroupData, c: Challenge) = Validation.challenge(c, d.challenges)
 
-    /** A reader without the app, i.e. one an admin may log for, rename or merge. */
-    fun reader(d: GroupData, memberId: String) = d.member(memberId)?.takeIf { !it.hasApp }
-        ?: throw RuleViolation("هذا العضو يسجّل قراءته بنفسه من التطبيق.")
-
     fun canRemove(d: GroupData, memberId: String, uid: String, isAdmin: Boolean) {
         manager(d, uid, isAdmin)
         val target = d.group.roles[memberId]

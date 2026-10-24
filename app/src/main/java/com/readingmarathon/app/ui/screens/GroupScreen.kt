@@ -167,7 +167,7 @@ fun GroupScreen(id: String) {
         }
     }
 
-    memberSheet?.let { m -> MemberSheet(d, m, uid, role, current) { memberSheet = null } }
+    memberSheet?.let { m -> MemberSheet(d, m, uid, role) { memberSheet = null } }
 
     if (confirmLeave) {
         AlertDialog(
@@ -255,14 +255,14 @@ private fun CurrentBook(d: GroupData, c: Challenge?, uid: String, today: LocalDa
             if (mine == null) {
                 GhostButton(
                     "أتممت الكتاب (+${Fmt.points(d.group.rules.finishBonus)})",
-                    onClick = { vm.run("مبارك! سُجّل إتمامك الكتاب.") { vm.backend.setFinished(d.group.id, c.id, uid, today) } },
+                    onClick = { vm.run("مبارك! سُجّل إتمامك الكتاب.") { vm.backend.setFinished(d.group.id, c.id, today) } },
                     icon = Icons.Rounded.Flag, modifier = Modifier.fillMaxWidth(),
                 )
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Tag("أتممته في ${Dates.short(mine.date)}", strong = true, icon = Icons.Rounded.Flag)
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { vm.run { vm.backend.setFinished(d.group.id, c.id, uid, null) } }) { Text("تراجع") }
+                    TextButton(onClick = { vm.run { vm.backend.setFinished(d.group.id, c.id, null) } }) { Text("تراجع") }
                 }
             }
         }
@@ -378,7 +378,6 @@ private fun Members(d: GroupData, uid: String, manager: Boolean, onMember: (Memb
                 when {
                     d.group.roles[m.id] == Role.OWNER -> Tag("المالك", strong = true)
                     d.group.roles[m.id] == Role.ADMIN -> Tag("مشرف", strong = true)
-                    !m.hasApp -> Tag("دون تطبيق")
                 }
             }
         }
@@ -386,7 +385,7 @@ private fun Members(d: GroupData, uid: String, manager: Boolean, onMember: (Memb
     if (manager) {
         Spacer(Modifier.height(8.dp))
         Text(
-            "المس عضواً لإدارته. أضف قرّاء دون التطبيق من إعدادات المجموعة.",
+            "المس عضواً لإدارته.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(10.dp))

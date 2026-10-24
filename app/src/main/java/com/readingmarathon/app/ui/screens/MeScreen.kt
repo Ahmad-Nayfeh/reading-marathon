@@ -2,6 +2,7 @@ package com.readingmarathon.app.ui.screens
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -20,7 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material3.AlertDialog
@@ -49,7 +51,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.readingmarathon.app.BuildConfig
 import com.readingmarathon.app.data.ThemeMode
 import com.readingmarathon.app.notify.Reminder
+import androidx.core.content.FileProvider
+import com.readingmarathon.app.data.MyData
 import com.readingmarathon.app.ui.LocalVm
+import java.io.File
 import com.readingmarathon.app.ui.components.Avatar
 import com.readingmarathon.app.ui.components.Heatmap
 import com.readingmarathon.app.ui.components.ListDivider
@@ -80,6 +85,7 @@ fun MeScreen() {
     val stats = remember(days, today) { Stats.personal(days, today) }
     var editName by remember { mutableStateOf(false) }
     var pickTime by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) vm.setReminder(true, settings.reminderHour, settings.reminderMinute) else vm.say("لن تصلك التذكيرات دون إذن الإشعارات.")
     }
@@ -92,7 +98,7 @@ fun MeScreen() {
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(p.name, style = MaterialTheme.typography.headlineSmall)
-                Text(if (acc.isGuest) "دون حساب" else acc.email.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(acc.email.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = { editName = true }) { Icon(Icons.Rounded.Edit, "تغيير الاسم") }
         }
@@ -174,12 +180,6 @@ fun MeScreen() {
 
         SectionLabel("الحساب")
         PaperCard(padding = PaddingValues(vertical = 4.dp)) {
-            if (acc.isGuest) {
-                RowItem("اربط حساب Google", "احفظ قراءتك ومجموعاتك لتعود إليها من أي هاتف.", Icons.Rounded.Link, onClick = {
-                    (context as? Activity)?.let(vm::signInWithGoogle)
-                })
-                ListDivider()
-            }
             if (acc.isAdmin) {
                 RowItem("لوحة إدارة المنصة", "كل المجموعات والحسابات والنشاط.", Icons.Rounded.AdminPanelSettings, onClick = nav::admin)
                 ListDivider()
@@ -188,19 +188,54 @@ fun MeScreen() {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://ahmad-nayfeh.github.io/marathon/privacy/")))
             })
             ListDivider()
-            RowItem(
-                "تسجيل الخروج",
-                if (acc.isGuest) "تنبيه: دون ربط حساب Google لن تستطيع العودة إلى بياناتك." else null,
-                Icons.AutoMirrored.Rounded.Logout,
-                onClick = vm::signOut,
-            )
+            RowItem("تسجيل الخروج", icon = Icons.AutoMirrored.Rounded.Logout, onClick = vm::signOut)
+        }
+
+        SectionLabel("بياناتي")
+        PaperCard(padding = PaddingValues(vertical = 4.dp)) {
+            RowItem("تصدير بياناتي", "كل قراءاتك ورفّك في ملفين يفتحهما Excel.", Icons.Rounded.FileDownload, onClick = {
+                vm.run(quiet = false) { shareMyData(context, vm.backend.exportMyData()) }
+            })
+            ListDivider()
+            RowItem("حذف حسابي", "يُحذف حسابك وكل بياناتك نهائياً.", Icons.Rounded.DeleteForever, onClick = { confirmDelete = true })
         }
         Spacer(Modifier.height(16.dp))
         Text("ماراثون القراءة · الإصدار ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterHorizontally))
     }
 
     if (editName) NameDialog(p.name, onDismiss = { editName = false }) { vm.saveProfile(it, p.goal, "حُفظ الاسم."); editName = false }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("حذف حسابك نهائياً؟") },
+            text = {
+                Text(
+                    "تُحذف قراءاتك ورفّك واقتراحاتك، ومكانك في كل مجموعة. المجموعة التي تملكها تنتقل إلى مشرف أو عضو فيها، وتُحذف إن كنت وحدك فيها. " +
+                        "سيطلب Google تأكيد حسابك. لا يمكن التراجع، فصدّر بياناتك أولاً إن أردت الاحتفاظ بها.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; (context as? Activity)?.let(vm::deleteAccount) }) {
+                    Text("احذف نهائياً", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("إلغاء") } },
+        )
+    }
     if (pickTime) TimeDialog(settings.reminderHour, settings.reminderMinute, onDismiss = { pickTime = false }) { h, m -> vm.setReminder(true, h, m); pickTime = false }
+}
+
+/** Saves the two CSV files and hands them to whatever app the reader picks (Drive, email, files...). */
+private fun shareMyData(context: Context, data: MyData) {
+    val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+    val uris = listOf("marathon-reading-log.csv" to data.reads, "marathon-shelf.csv" to data.shelf).map { (name, text) ->
+        val f = File(dir, name).apply { writeText(text) }
+        FileProvider.getUriForFile(context, context.packageName + ".files", f)
+    }
+    val send = Intent(Intent.ACTION_SEND_MULTIPLE).setType("text/csv")
+        .putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    context.startActivity(Intent.createChooser(send, "تصدير بياناتي"))
 }
 
 private fun time(h: Int, m: Int): String = "%d:%02d %s".format(if (h % 12 == 0) 12 else h % 12, m, if (h < 12) "ص" else "م")

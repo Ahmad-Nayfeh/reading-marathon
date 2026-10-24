@@ -13,7 +13,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FileDownload
-import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
@@ -70,7 +69,6 @@ fun GroupSettingsScreen(id: String) {
     var perPoint by rememberSaveable(g.id) { mutableIntStateOf(g.rules.minutesPerPoint) }
     var bonus by rememberSaveable(g.id) { mutableIntStateOf(g.rules.finishBonus) }
     var countAll by rememberSaveable(g.id) { mutableStateOf(g.rules.countAll) }
-    var reader by rememberSaveable { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     val changed = name != g.name || about != g.about || public != (g.visibility == Visibility.PUBLIC) ||
         perPoint != g.rules.minutesPerPoint || bonus != g.rules.finishBonus || countAll != g.rules.countAll
@@ -137,24 +135,8 @@ fun GroupSettingsScreen(id: String) {
             })
         }
 
-        SectionLabel("قرّاء دون التطبيق")
-        PaperCard {
-            Text(
-                "لمن لا يستخدم التطبيق: أضف اسمه، ثم سجّل قراءته من قائمة الأعضاء. وإن انضم لاحقاً فادمج تاريخه في حسابه.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                OutlinedTextField(reader, { reader = it.take(Limits.MAX_NAME) }, label = { Text("الاسم") }, singleLine = true, modifier = Modifier.weight(1f))
-                Spacer(Modifier.padding(4.dp))
-                GhostButton("أضف", enabled = reader.isNotBlank(), onClick = { vm.run("أُضيف ${reader.trim()}.", then = { reader = "" }) { vm.backend.addReader(id, reader) } })
-            }
-        }
-
         SectionLabel("البيانات")
         PaperCard(padding = PaddingValues(vertical = 4.dp)) {
-            RowItem("استيراد من نموذج Google", "ردود النموذج القديم بصيغة CSV.", Icons.Rounded.FileUpload, onClick = { nav.importCsv(id) })
-            ListDivider()
             RowItem("تصدير إلى Excel", "كل الأيام والأعضاء في ملف CSV.", Icons.Rounded.FileDownload, onClick = { exportCsv(context, d) })
         }
 

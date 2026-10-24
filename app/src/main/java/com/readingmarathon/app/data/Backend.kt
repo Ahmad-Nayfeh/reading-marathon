@@ -4,10 +4,8 @@ import android.app.Activity
 import com.readingmarathon.core.BookBrief
 import com.readingmarathon.core.CatalogBook
 import com.readingmarathon.core.Challenge
-import com.readingmarathon.core.CsvImport
 import com.readingmarathon.core.Day
 import com.readingmarathon.core.GroupData
-import com.readingmarathon.core.Member
 import com.readingmarathon.core.Read
 import com.readingmarathon.core.ShelfBook
 import com.readingmarathon.core.ShelfStatus
@@ -21,7 +19,7 @@ import java.time.LocalDate
 /** The platform owner. Only this Google account sees the platform admin panel (enforced again in firestore.rules). */
 const val ADMIN_EMAIL = "readingmarathon.admin@gmail.com"
 
-/** Who is signed in. Guests have no email until they link a Google account. */
+/** Who is signed in. [isGuest] is an old guest account: it must link Google before going on. */
 data class Account(
     val uid: String,
     val email: String?,
@@ -95,6 +93,9 @@ data class AdminOverview(
     val banned: Set<String> = emptySet(),
 )
 
+/** The reader's data, ready to save: one CSV for the reading log, one for the shelf. */
+data class MyData(val reads: String, val shelf: String)
+
 /** A message every reader sees on the home screen until they dismiss it. */
 data class Announcement(val id: String, val title: String, val body: String, val active: Boolean = true, val createdAt: Long = 0)
 
@@ -123,9 +124,17 @@ interface Backend {
     /** True until the saved sign-in (if any) has been restored. */
     val restoring: StateFlow<Boolean>
 
+    /** Google only. An old guest account is linked, so it keeps its data. */
     suspend fun signInWithGoogle(activity: Activity)
-    suspend fun signInAsGuest()
     suspend fun signOut()
+    /** Everything the reader logged: their reads (with book names) and their shelf, as CSV. */
+    suspend fun exportMyData(): MyData
+    /**
+     * Deletes the account and everything in it: log, shelf, profile, suggestions, and its place in
+     * every group (an owned group passes to another member, or is deleted when no one else is in it).
+     * Asks Google to confirm the account first.
+     */
+    suspend fun deleteAccount(activity: Activity)
 
     /** null while loading or signed out. */
     val profile: StateFlow<Profile?>
@@ -174,17 +183,10 @@ interface Backend {
     suspend fun newInviteCode(groupId: String)
     suspend fun saveChallenge(groupId: String, challenge: Challenge)
     suspend fun deleteChallenge(groupId: String, challengeId: String)
-    /** Marks (or with null, unmarks) that a member finished a challenge's book. */
-    suspend fun setFinished(groupId: String, challengeId: String, memberId: String, date: LocalDate?)
+    /** Marks (or with null, unmarks) that the reader finished a challenge's book. Only for oneself. */
+    suspend fun setFinished(groupId: String, challengeId: String, date: LocalDate?)
     suspend fun setRole(groupId: String, uid: String, role: Role)
     suspend fun removeMember(groupId: String, memberId: String)
-    /** A reader without the app, whose reading an admin logs. */
-    suspend fun addReader(groupId: String, name: String): Member
-    suspend fun renameReader(groupId: String, memberId: String, name: String)
-    suspend fun setReaderDay(groupId: String, memberId: String, date: LocalDate, minutes: Int)
-    /** Moves a reader-without-the-app's history onto a member's account, then removes the reader. */
-    suspend fun mergeReader(groupId: String, fromId: String, intoId: String)
-    suspend fun applyImport(groupId: String, plan: CsvImport.Plan)
     suspend fun deleteGroup(groupId: String)
 
     // Book catalog (every reader)

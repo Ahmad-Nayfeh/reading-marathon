@@ -44,4 +44,29 @@ object Export {
             }
         }
     }
+
+    /** The reader's own log, one row per book per day, for "export my data". Opens in Excel. */
+    fun myReads(reads: List<Read>, shelf: List<ShelfBook>, titleOf: (String) -> String?): String {
+        val books = shelf.associateBy { it.bookId }
+        return buildString {
+            append('\uFEFF')
+            appendLine("التاريخ,الكتاب,المؤلف,الدقائق")
+            reads.filter { it.minutes > 0 }.sortedWith(compareBy<Read> { it.date }.thenBy { it.bookId }).forEach { r ->
+                val b = books[r.bookId]
+                appendLine(listOf(r.date.toString(), q(b?.title ?: titleOf(r.bookId) ?: r.bookId), q(b?.author.orEmpty()), r.minutes.toString()).joinToString(","))
+            }
+        }
+    }
+
+    /** The reader's shelf, one row per book. */
+    fun myShelf(shelf: List<ShelfBook>): String = buildString {
+        append('\uFEFF')
+        appendLine("الكتاب,المؤلف,الحالة,الدقائق")
+        shelf.sortedBy { it.status.ordinal }.forEach { b ->
+            val status = when (b.status) { ShelfStatus.READING -> "أقرؤه"; ShelfStatus.FINISHED -> "أتممته"; ShelfStatus.WANT -> "أريد قراءته" }
+            appendLine(listOf(q(b.title), q(b.author), status, b.minutes.toString()).joinToString(",")) 
+        }
+    }
+
+    private fun q(s: String) = if (s.any { it == ',' || it == '"' || it == '\n' }) "\"" + s.replace("\"", "\"\"") + "\"" else s
 }

@@ -14,15 +14,19 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.gms.tasks.Task
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.AuthCredential
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.AggregateSource
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.WriteBatch
 import com.readingmarathon.core.BookBrief
 import com.readingmarathon.core.Challenge
@@ -38,12 +42,12 @@ import com.readingmarathon.core.CatalogBook
 import com.readingmarathon.core.Catalog
 import com.readingmarathon.core.BookStatus
 import com.readingmarathon.core.ChallengeStatus
-import com.readingmarathon.core.CsvImport
 import com.readingmarathon.core.Day
 import com.readingmarathon.core.Entry
 import com.readingmarathon.core.Finish
 import com.readingmarathon.core.Group
 import com.readingmarathon.core.GroupData
+import com.readingmarathon.core.Export
 import com.readingmarathon.core.Ids
 import com.readingmarathon.core.Limits
 import com.readingmarathon.core.Member
@@ -52,18 +56,25 @@ import com.readingmarathon.core.RuleViolation
 import com.readingmarathon.core.Rules
 import com.readingmarathon.core.Validation
 import com.readingmarathon.core.Visibility
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
 
-/** Firebase: Google or anonymous (guest) sign-in, Firestore for everything else. Schema in [Docs]. */
+/** Firebase: Google sign-in, Firestore for everything else. Schema in [Docs]. */
 class FirebaseBackend(private val context: Context, override val configured: Boolean) : Backend {
 
     private val auth: FirebaseAuth? = if (configured && FirebaseApp.getApps(context).isNotEmpty()) FirebaseAuth.getInstance() else null
     private val db: FirebaseFirestore? = auth?.let { FirebaseFirestore.getInstance() }
+    private val bundled = BundledCatalog(context)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _account = MutableStateFlow<Account?>(null)
     override val account: StateFlow<Account?> = _account
@@ -93,11 +104,14 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
     private val peeked = HashSet<String>()
 
     init {
+        // Read the bundled catalog off the main thread, before the first search needs it.
+        scope.launch { bundled.books }
         auth?.addAuthStateListener { a ->
             val user = a.currentUser
             _account.value = user?.toAccount()
             _restoring.value = false
             if (user?.uid != uidLoaded) load(user?.uid)
+            if (isAdmin()) seedCatalog()
         }
     }
 
@@ -261,8 +275,8 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
 
     // ---- Accounts ----
 
-    override suspend fun signInWithGoogle(activity: Activity) {
-        val a = requireAuth()
+    /** Asks the phone for a Google account; null when the reader cancels. */
+    private suspend fun googleCredential(activity: Activity): AuthCredential? {
         val clientId = activity.resources.getIdentifier("default_web_client_id", "string", activity.packageName)
             .takeIf { it != 0 }?.let(activity::getString)
             ?: throw RuleViolation("الدخول بحساب Google غير مفعّل في هذه النسخة.")
@@ -272,7 +286,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         val result = try {
             CredentialManager.create(activity).getCredential(activity, request)
         } catch (e: GetCredentialCancellationException) {
-            return
+            return null
         } catch (e: NoCredentialException) {
             throw RuleViolation("لا يوجد حساب Google على هذا الهاتف. أضف حساباً من إعدادات الهاتف.")
         }
@@ -280,10 +294,15 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         if (c !is CustomCredential || c.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
             throw RuleViolation("تعذّر الدخول بحساب Google.")
         }
-        val credential = GoogleAuthProvider.getCredential(GoogleIdTokenCredential.createFrom(c.data).idToken, null)
+        return GoogleAuthProvider.getCredential(GoogleIdTokenCredential.createFrom(c.data).idToken, null)
+    }
+
+    override suspend fun signInWithGoogle(activity: Activity) {
+        val a = requireAuth()
+        val credential = googleCredential(activity) ?: return
         val current = a.currentUser
         if (current != null && current.isAnonymous) {
-            // A guest keeps everything by linking; if this Google account already exists, switch to it.
+            // An old guest account keeps everything by linking; if this Google account already exists, switch to it.
             try {
                 current.linkWithCredential(credential).await()
             } catch (e: FirebaseAuthUserCollisionException) {
@@ -298,13 +317,61 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         a.currentUser?.let { _account.value = it.toAccount(); touchUser(it) }
     }
 
-    override suspend fun signInAsGuest() {
-        val user = requireAuth().signInAnonymously().await().user ?: throw RuleViolation("تعذّر الدخول. تحقق من الاتصال بالإنترنت.")
-        touchUser(user)
-    }
-
     override suspend fun signOut() {
         auth?.signOut()
+        runCatching { CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest()) }
+    }
+
+    override suspend fun exportMyData(): MyData {
+        val me = users().document(uid())
+        // The whole history from the server, not just the year the app keeps loaded.
+        val reads = me.collection("reads").get().await().documents.mapNotNull { runCatching { Docs.read(it.data.orEmpty()) }.getOrNull() }
+        val shelf = me.collection("shelf").get().await().documents.map { Docs.shelf(it.id, it.data.orEmpty()) }
+        val titles = bundled.books.associate { it.id to it.title }
+        return MyData(Export.myReads(reads, shelf) { titles[it] }, Export.myShelf(shelf))
+    }
+
+    override suspend fun deleteAccount(activity: Activity) {
+        val a = requireAuth()
+        val user = a.currentUser ?: throw RuleViolation("سجّل الدخول أولاً.")
+        // Google confirms it is really the owner, before anything is deleted.
+        val credential = googleCredential(activity) ?: throw RuleViolation("لم يُحذف شيء.")
+        try {
+            user.reauthenticate(credential).await()
+        } catch (e: FirebaseAuthException) {
+            throw RuleViolation("اختر حساب Google نفسه الذي تدخل به، ثم أعد المحاولة. لم يُحذف شيء.")
+        }
+        val me = user.uid
+        val db = requireDb()
+        val mine = users().document(me)
+        // Every group the reader is in, or ever was in (their past reading stays there otherwise).
+        val profile = mine.get(Source.SERVER).await()
+        val gids = (listOf("groups", "joined").flatMap { (profile.get(it) as? List<*>).orEmpty() }.filterIsInstance<String>() + _profile.value?.groups.orEmpty()).distinct()
+        for (gid in gids) {
+            val g = groupRef(gid)
+            val snap = runCatching { g.get(Source.SERVER).await() }.getOrNull() ?: continue
+            if (!snap.exists()) continue
+            val group = Docs.group(gid, snap.data.orEmpty())
+            val role = group.roleOf(me)
+            if (role == Role.OWNER) {
+                val heir = group.roles.entries.filter { it.key != me }.sortedBy { if (it.value == Role.ADMIN) 0 else 1 }.firstOrNull()?.key
+                if (heir == null) { deleteGroupFully(gid, group.inviteCode); continue }
+                // The group goes on: ownership passes to an admin (or a member), then the reader leaves it.
+                g.update(mapOf("roles.$heir" to "owner", "roles.$me" to "admin")).await()
+            }
+            val writes = mutableListOf<(WriteBatch) -> Unit>()
+            g.collection("entries").whereEqualTo("memberId", me).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+            g.collection("finishes").whereEqualTo("memberId", me).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+            writes += { b -> b.delete(g.collection("members").document(me)) }
+            commitAll(writes)
+            if (role != null) g.update("roles.$me", FieldValue.delete()).await()
+        }
+        val writes = mutableListOf<(WriteBatch) -> Unit>()
+        for (sub in listOf("reads", "shelf", "days")) mine.collection(sub).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+        db.collection("suggestions").whereEqualTo("by", me).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
+        writes += { b -> b.delete(mine) }
+        commitAll(writes)
+        user.delete().await()
         runCatching { CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest()) }
     }
 
@@ -474,7 +541,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
             .commit().await()
         db.batch()
             .set(groupRef(id).collection("members").document(me), mapOf("name" to profile.name, "linkedUid" to me, "active" to true, "joinedAt" to now))
-            .set(users().document(me), mapOf("groups" to FieldValue.arrayUnion(id)), SetOptions.merge())
+            .set(users().document(me), mapOf("groups" to FieldValue.arrayUnion(id), "joined" to FieldValue.arrayUnion(id)), SetOptions.merge())
             .commit().await()
         return id
     }
@@ -511,7 +578,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
             db.batch()
                 .set(groupRef(groupId).collection("members").document(me), member)
                 .update(groupRef(groupId), "roles.$me", "member")
-                .set(users().document(me), mapOf("groups" to FieldValue.arrayUnion(groupId)), SetOptions.merge())
+                .set(users().document(me), mapOf("groups" to FieldValue.arrayUnion(groupId), "joined" to FieldValue.arrayUnion(groupId)), SetOptions.merge())
                 .commit().await()
             backfill(groupId)
         } else if (groupId !in profile.groups) {
@@ -600,10 +667,10 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         batch.commit().await()
     }
 
-    override suspend fun setFinished(groupId: String, challengeId: String, memberId: String, date: LocalDate?) {
+    override suspend fun setFinished(groupId: String, challengeId: String, date: LocalDate?) {
         val d = loaded(groupId)
         val me = uid()
-        if (memberId != me) Checks.manager(d, me, isAdmin())
+        val memberId = me
         val c = d.challenge(challengeId) ?: throw RuleViolation("لم يعد هذا التحدي موجوداً.")
         val ref = groupRef(groupId).collection("finishes").document(Finish.finishId(memberId, challengeId))
         if (date == null) {
@@ -614,7 +681,7 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         }
         // The reader's shelf follows: finished here means finished there.
         val bid = c.bookId
-        if (memberId == me && bid != null) {
+        if (bid != null) {
             runCatching {
                 shelfRef(bid).set(
                     mapOf(
@@ -651,88 +718,24 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         batch.commit().await()
     }
 
-    override suspend fun addReader(groupId: String, name: String): Member {
-        val d = loaded(groupId)
-        Checks.manager(d, uid(), isAdmin())
-        Validation.memberName(name, d.members)
-        val m = Member(Ids.newId("r_"), name.trim())
-        groupRef(groupId).collection("members").document(m.id)
-            .set(mapOf("name" to m.name, "linkedUid" to null, "active" to true, "joinedAt" to System.currentTimeMillis())).await()
-        return m
-    }
-
-    override suspend fun renameReader(groupId: String, memberId: String, name: String) {
-        val d = loaded(groupId)
-        Checks.manager(d, uid(), isAdmin())
-        Checks.reader(d, memberId)
-        Validation.memberName(name, d.members, selfId = memberId)
-        groupRef(groupId).collection("members").document(memberId).update("name", name.trim()).await()
-    }
-
-    override suspend fun setReaderDay(groupId: String, memberId: String, date: LocalDate, minutes: Int) {
-        val d = loaded(groupId)
-        Checks.manager(d, uid(), isAdmin())
-        Checks.reader(d, memberId)
-        if (date.isAfter(today())) throw RuleViolation("لا يمكن تسجيل قراءة ليوم لم يأتِ بعد.")
-        if (minutes !in 0..Limits.MAX_MINUTES_PER_DAY) throw RuleViolation("الدقائق بين 0 و960.")
-        val ref = groupRef(groupId).collection("entries").document(Entry.entryId(memberId, date))
-        if (minutes == 0) ref.delete().await() else ref.set(Docs.entryMap(Entry(memberId, date, minutes, System.currentTimeMillis()))).await()
-    }
-
-    override suspend fun mergeReader(groupId: String, fromId: String, intoId: String) {
-        val d = loaded(groupId)
-        Checks.manager(d, uid(), isAdmin())
-        Checks.reader(d, fromId)
-        val into = d.member(intoId)?.takeIf { it.active } ?: throw RuleViolation("العضو غير موجود.")
-        val now = System.currentTimeMillis()
-        val root = groupRef(groupId)
-        val writes = mutableListOf<(WriteBatch) -> Unit>()
-        val theirs = d.entries.filter { it.memberId == into.id }.associateBy { it.date }
-        d.entries.filter { it.memberId == fromId }.forEach { e ->
-            val sum = ((theirs[e.date]?.minutes ?: 0) + e.minutes).coerceAtMost(Limits.MAX_MINUTES_PER_DAY)
-            writes += { b -> b.set(root.collection("entries").document(Entry.entryId(into.id, e.date)), Docs.entryMap(Entry(into.id, e.date, sum, now))) }
-            writes += { b -> b.delete(root.collection("entries").document(e.id)) }
-        }
-        d.finishes.filter { it.memberId == fromId }.forEach { f ->
-            if (d.finished(into.id, f.challengeId) == null) {
-                writes += { b -> b.set(root.collection("finishes").document(Finish.finishId(into.id, f.challengeId)), Docs.finishMap(f.copy(memberId = into.id))) }
-            }
-            writes += { b -> b.delete(root.collection("finishes").document(f.id)) }
-        }
-        writes += { b -> b.update(root.collection("members").document(fromId), "active", false) }
-        commitAll(writes)
-    }
-
-    override suspend fun applyImport(groupId: String, plan: CsvImport.Plan) {
-        val d = loaded(groupId)
-        Checks.manager(d, uid(), isAdmin())
-        val root = groupRef(groupId)
-        val now = System.currentTimeMillis()
-        val writes = mutableListOf<(WriteBatch) -> Unit>()
-        plan.newMembers.forEach { m ->
-            writes += { b -> b.set(root.collection("members").document(m.id), mapOf("name" to m.name, "linkedUid" to null, "active" to true, "joinedAt" to now)) }
-        }
-        plan.entries.forEach { e -> writes += { b -> b.set(root.collection("entries").document(e.id), Docs.entryMap(e)) } }
-        plan.finishes.forEach { f -> writes += { b -> b.set(root.collection("finishes").document(f.id), Docs.finishMap(f)) } }
-        commitAll(writes)
-    }
-
     override suspend fun deleteGroup(groupId: String) {
         val d = loaded(groupId)
         Checks.owner(d, uid(), isAdmin())
+        deleteGroupFully(groupId, d.group.inviteCode)
+        users().document(uid()).set(mapOf("groups" to FieldValue.arrayRemove(groupId)), SetOptions.merge()).await()
+    }
+
+    /** Everything the group holds, including history older than what the app loads. */
+    private suspend fun deleteGroupFully(groupId: String, inviteCode: String) {
         val db = requireDb()
         val root = groupRef(groupId)
         val writes = mutableListOf<(WriteBatch) -> Unit>()
-        // Delete everything the group holds, including history older than what the app loads.
         for (sub in listOf("members", "challenges", "entries", "finishes")) {
             root.collection(sub).get().await().documents.forEach { doc -> writes += { b -> b.delete(doc.reference) } }
         }
-        if (d.group.inviteCode.isNotBlank()) writes += { b -> b.delete(db.collection("invites").document(d.group.inviteCode)) }
+        if (inviteCode.isNotBlank()) writes += { b -> b.delete(db.collection("invites").document(inviteCode)) }
         commitAll(writes)
-        db.batch()
-            .delete(root)
-            .set(users().document(uid()), mapOf("groups" to FieldValue.arrayRemove(groupId)), SetOptions.merge())
-            .commit().await()
+        root.delete().await()
     }
 
     /** Firestore batches hold at most 500 writes. */
@@ -756,7 +759,9 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         val daysQ = async { db.collectionGroup("days").get().await() }
         val challengesQ = async { db.collectionGroup("challenges").get().await() }
         val finishesQ = async { db.collectionGroup("finishes").get().await() }
-        val booksQ = async { db.collection("books").get().await() }
+        val booksAll = async { db.collection("books").count().get(AggregateSource.SERVER).await().count }
+        val booksMerged = async { db.collection("books").whereEqualTo("status", "merged").count().get(AggregateSource.SERVER).await().count }
+        val booksPending = async { db.collection("books").whereEqualTo("status", "pending").count().get(AggregateSource.SERVER).await().count }
         val openQ = async { db.collection("suggestions").whereEqualTo("status", "open").get().await() }
         val bannedQ = async { db.collection("banned").get().await() }
 
@@ -823,8 +828,8 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
             daily = (0L until 30L).map { byDay[monthAgo.plusDays(it).toString()] ?: 0L },
             activeReaders = (0L until 30L).map { off -> val d = monthAgo.plusDays(off).toString(); days.count { it.date == d && it.minutes > 0 } },
             topBooks = topBooks,
-            catalogBooks = booksQ.await().documents.count { it.getString("status") != "merged" },
-            pendingBooks = booksQ.await().documents.count { it.getString("status") == "pending" },
+            catalogBooks = (booksAll.await() - booksMerged.await()).toInt(),
+            pendingBooks = booksPending.await().toInt(),
             openSuggestions = openQ.await().size(),
             banned = bannedQ.await().documents.map { it.id }.toSet(),
         )
@@ -989,7 +994,8 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
         if (uid == uid()) throw RuleViolation("لا يمكنك حذف بيانات حسابك من هنا.")
         val db = requireDb()
         val user = db.collection("users").document(uid)
-        val gids = (user.get().await().get("groups") as? List<*>)?.filterIsInstance<String>().orEmpty()
+        val snap = user.get().await()
+        val gids = listOf("groups", "joined").flatMap { (snap.get(it) as? List<*>).orEmpty() }.filterIsInstance<String>().distinct()
         val writes = mutableListOf<(WriteBatch) -> Unit>()
         for (sub in listOf("days", "reads", "shelf")) user.collection(sub).get().await().documents.forEach { d -> writes += { b -> b.delete(d.reference) } }
         for (gid in gids) {
@@ -1037,15 +1043,43 @@ class FirebaseBackend(private val context: Context, override val configured: Boo
 
     // ---- Book catalog ----
 
+    /** The shared catalog (as the admin keeps it) plus the catalog bundled in the app; the shared copy wins. */
     override suspend fun searchBooks(query: String): List<CatalogBook> {
         val key = Catalog.queryKey(query) ?: return emptyList()
-        val found = requireDb().collection("books").whereArrayContains("keys", key).limit(40).get().await()
-            .documents.map { Docs.book(it.id, it.data.orEmpty()) }
-        return Catalog.rank(query, found).take(20)
+        val local = withContext(Dispatchers.Default) { bundled.search(query, 30) }
+        val shared = runCatching {
+            requireDb().collection("books").whereArrayContains("keys", key).limit(40).get().await()
+                .documents.map { Docs.book(it.id, it.data.orEmpty()) }
+        }.getOrElse { if (local.isEmpty()) throw it else emptyList() }
+        val ids = shared.map { it.id }.toSet()
+        return Catalog.rank(query, shared + local.filter { it.id !in ids }).take(20)
+    }
+
+    /** The admin's app copies the bundled catalog into Firestore once (marked in the audit log). */
+    private var seeding = false
+    private fun seedCatalog() {
+        if (seeding) return
+        seeding = true
+        scope.launch {
+            runCatching {
+                val db = requireDb()
+                val marker = db.collection("adminLog").document("seed-catalog-1")
+                if (marker.get(Source.SERVER).await().exists()) return@launch
+                val existing = db.collection("books").get(Source.SERVER).await().documents.map { Docs.book(it.id, it.data.orEmpty()) }
+                val ids = existing.map { it.id }.toHashSet()
+                val names = existing.flatMap { b -> (listOf(b.title) + b.aliases).map { Text.normalize(it) to Text.normalize(b.author) } }.toHashSet()
+                val now = System.currentTimeMillis()
+                val me = uid()
+                val fresh = bundled.books.filter { b -> b.id !in ids && (Text.normalize(b.title) to Text.normalize(b.author)) !in names }
+                commitAll(fresh.map { b -> { batch: WriteBatch -> batch.set(db.collection("books").document(b.id), Docs.bookMap(b.copy(status = BookStatus.VERIFIED, createdBy = me, createdAt = now))) } })
+                marker.set(mapOf("at" to now, "action" to "أضاف فهرس الكتب الأولي", "target" to "${fresh.size} كتاباً")).await()
+            }.onFailure { Log.w(TAG, "seed", it); seeding = false }
+        }
     }
 
     override suspend fun book(id: String): CatalogBook? =
         requireDb().collection("books").document(id).get().await().takeIf { it.exists() }?.let { Docs.book(it.id, it.data.orEmpty()) }
+            ?: bundled.books.firstOrNull { it.id == id }
 
     override suspend fun proposeBook(title: String, author: String, pages: Int?): CatalogBook {
         Catalog.validate(title, author)

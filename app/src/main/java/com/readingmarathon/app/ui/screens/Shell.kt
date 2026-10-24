@@ -59,7 +59,6 @@ class Nav(val controller: NavHostController, private val openDay: (LocalDate, St
     fun group(id: String) = controller.navigate("group/$id")
     fun groupSettings(id: String) = controller.navigate("group/$id/settings")
     fun book(groupId: String, challengeId: String?) = controller.navigate("group/$groupId/book" + (challengeId?.let { "?cid=$it" } ?: ""))
-    fun importCsv(groupId: String) = controller.navigate("group/$groupId/import")
     fun create() = controller.navigate("create")
     fun join(code: String? = null) = controller.navigate("join" + (code?.let { "?code=$it" } ?: ""))
     fun admin() = controller.navigate("admin")
@@ -111,7 +110,6 @@ fun Shell() {
                 "group/{id}/book?cid={cid}",
                 arguments = listOf(navArgument("cid") { type = NavType.StringType; nullable = true; defaultValue = null }),
             ) { e -> ChallengeEditor(e.arguments?.getString("id").orEmpty(), e.arguments?.getString("cid")) }
-            composable("group/{id}/import") { e -> ImportScreen(e.arguments?.getString("id").orEmpty()) }
             composable("create") { CreateGroupScreen() }
             composable(
                 "join?code={code}",

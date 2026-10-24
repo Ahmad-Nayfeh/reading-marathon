@@ -81,7 +81,7 @@ internal fun AdminUsers(o: AdminOverview, refresh: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (u.uid in o.banned) Tag("موقوف", strong = true) else if (u.isGuest) Tag("دون Google")
+                if (u.uid in o.banned) Tag("موقوف", strong = true) else if (u.isGuest) Tag("ضيف قديم")
             }
         }
     }
@@ -106,7 +106,7 @@ private fun UserSheet(uid: String, onChanged: () -> Unit, onDismiss: () -> Unit)
             val u = x.user
             Text(u.name?.takeIf { it.isNotBlank() } ?: "دون اسم", style = MaterialTheme.typography.headlineSmall)
             Text(
-                listOf(u.email ?: "دون حساب Google", if (u.createdAt > 0) "أُنشئ ${Dates.long(day(u.createdAt))}" else "").filter { it.isNotBlank() }.joinToString(" · "),
+                listOf(u.email ?: "ضيف قديم", if (u.createdAt > 0) "أُنشئ ${Dates.long(day(u.createdAt))}" else "").filter { it.isNotBlank() }.joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (x.banned) { Spacer(Modifier.height(6.dp)); Tag("موقوف", strong = true) }

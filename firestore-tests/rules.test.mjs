@@ -18,7 +18,7 @@ const G = 'groups/g1';
 // --- profile and personal log
 await t('own creates profile', assertSucceeds(setDoc(doc(own, 'users/own'), { email: 'own@gmail.com', guest: false, goal: 30, groups: [], createdAt: 1, lastSeen: 1 })));
 await t('profile email must match the account', assertFails(setDoc(doc(eve, 'users/eve'), { email: 'x@gmail.com', guest: true })));
-await t('guest profile with no email', assertSucceeds(setDoc(doc(ali, 'users/ali'), { guest: true, name: 'علي', goal: 20, groups: [] })));
+await t('profile with no email in the token', assertSucceeds(setDoc(doc(ali, 'users/ali'), { guest: true, name: 'علي', goal: 20, groups: [] })));
 await t('profile rejects unknown fields', assertFails(setDoc(doc(ali, 'users/ali'), { isAdmin: true }, { merge: true })));
 await t('cannot write someone else\'s profile', assertFails(setDoc(doc(eve, 'users/ali'), { name: 'x' }, { merge: true })));
 await t('cannot read someone else\'s profile', assertFails(getDoc(doc(eve, 'users/own'))));
@@ -26,6 +26,10 @@ await t('logs own day', assertSucceeds(setDoc(doc(ali, 'users/ali/days/2026-10-2
 await t('day id must match its date', assertFails(setDoc(doc(ali, 'users/ali/days/2026-10-21'), { date: '2026-10-20', minutes: 30, updatedAt: 1 })));
 await t('day over 16 h rejected', assertFails(setDoc(doc(ali, 'users/ali/days/2026-10-22'), { date: '2026-10-22', minutes: 961, updatedAt: 1 })));
 await t('others cannot read my log', assertFails(getDoc(doc(eve, 'users/ali/days/2026-10-20'))));
+const anon = as('anon', { firebase: { sign_in_provider: 'anonymous' } });
+await t('a guest (anonymous) account is refused', assertFails(setDoc(doc(anon, 'users/anon/days/2026-10-20'), { date: '2026-10-20', minutes: 30, updatedAt: 1 })));
+await t('a guest cannot read the catalog', assertFails(getDocs(query(collection(anon, 'books'), where('keys', 'array-contains', 'اي')))));
+await t('a Google account is accepted', assertSucceeds(setDoc(doc(as('goo', { firebase: { sign_in_provider: 'google.com' } }), 'users/goo/days/2026-10-20'), { date: '2026-10-20', minutes: 30, updatedAt: 1 })));
 
 // --- createGroup: group + invite, then own member + profile
 const b1 = writeBatch(own);
@@ -82,9 +86,12 @@ await t('ali deletes his day', assertSucceeds(deleteDoc(doc(ali, `${G}/entries/a
 await t('ali marks his finish', assertSucceeds(setDoc(doc(ali, `${G}/finishes/ali_c1`), { memberId: 'ali', challengeId: 'c1', date: '2026-10-20' })));
 await t('ali cannot mark a finish for others', assertFails(setDoc(doc(ali, `${G}/finishes/own_c1`), { memberId: 'own', challengeId: 'c1', date: '2026-10-20' })));
 
-// --- readers without the app (owner logs for them)
-await t('owner adds a reader without the app', assertSucceeds(setDoc(doc(own, G + '/members/r_abu'), { name: 'أبو أحمد', linkedUid: null, active: true, joinedAt: 1 })));
-await t('owner logs for the reader', assertSucceeds(setDoc(doc(own, `${G}/entries/r_abu_2026-10-20`), e('r_abu', '2026-10-20'))));
+// --- nobody logs for anybody else, not even the owner
+await t('owner cannot add a reader without an account', assertFails(setDoc(doc(own, G + '/members/r_abu'), { name: 'أبو أحمد', linkedUid: null, active: true, joinedAt: 1 })));
+await t('owner cannot log for a member', assertFails(setDoc(doc(own, `${G}/entries/ali_2026-10-21`), e('ali', '2026-10-21'))));
+await t('owner cannot mark a finish for a member', assertFails(setDoc(doc(own, `${G}/finishes/ali_c2`), { memberId: 'ali', challengeId: 'c2', date: '2026-10-20' })));
+await t('owner cannot rename a member', assertFails(updateDoc(doc(own, G + '/members/ali'), { name: 'x' })));
+await t('ali logs another day', assertSucceeds(setDoc(doc(ali, `${G}/entries/ali_2026-10-19`), e('ali', '2026-10-19'))));
 
 // --- roles
 await t('owner makes ali admin', assertSucceeds(updateDoc(doc(own, G), { 'roles.ali': 'admin' })));
@@ -92,6 +99,8 @@ await t('admin edits the group', assertSucceeds(updateDoc(doc(ali, G), { about: 
 await t('admin cannot promote anyone', assertFails(updateDoc(doc(ali, G), { 'roles.ali': 'owner' })));
 await env.withSecurityRulesDisabled(async c => { await join(c.firestore(), 'sam', 'ABC234'); });
 await t('admin removes a plain member', assertSucceeds(updateDoc(doc(ali, G), { 'roles.sam': deleteField() })));
+await t('admin marks the removed member inactive', assertSucceeds(updateDoc(doc(ali, G + '/members/sam'), { active: false })));
+await t('admin cannot rename a member', assertFails(updateDoc(doc(ali, G + '/members/sam'), { name: 'x' })));
 await t('admin cannot remove the owner', assertFails(updateDoc(doc(ali, G), { 'roles.own': deleteField() })));
 const sam = as('sam');
 await t('removed member cannot log', assertFails(setDoc(doc(sam, `${G}/entries/sam_2026-10-20`), e('sam', '2026-10-20'))));
@@ -114,7 +123,18 @@ const leave = (db, id) => {
   b.update(doc(db, `users/${id}`), { groups: [] });
   return b.commit();
 };
+await t('sam logs a day', assertSucceeds(setDoc(doc(sam, `${G}/entries/sam_2026-10-21`), e('sam', '2026-10-21'))));
 await t('sam leaves', assertSucceeds(leave(sam, 'sam')));
+// --- deleting one's account: after leaving, a reader still finds and deletes their own data
+await t('sam finds his old entries', assertSucceeds(getDocs(query(collection(sam, G + '/entries'), where('memberId', '==', 'sam')))));
+await t('sam cannot read the others\' entries', assertFails(getDocs(collection(sam, G + '/entries'))));
+await t('sam deletes his old entry', assertSucceeds(deleteDoc(doc(sam, `${G}/entries/sam_2026-10-21`))));
+await t('sam deletes his member document', assertSucceeds(deleteDoc(doc(sam, G + '/members/sam'))));
+await t('eve cannot delete ali\'s entry', assertFails(deleteDoc(doc(eve, `${G}/entries/ali_2026-10-19`))));
+await t('eve cannot delete ali\'s member document', assertFails(deleteDoc(doc(eve, G + '/members/ali'))));
+await t('sam deletes his own profile', assertSucceeds(deleteDoc(doc(sam, 'users/sam'))));
+await t('eve cannot delete ali\'s profile', assertFails(deleteDoc(doc(eve, 'users/ali'))));
+await t('ali deletes his own day', assertSucceeds(deleteDoc(doc(ali, 'users/ali/days/2026-10-21'))));
 await t('owner cannot leave without handing over', assertFails(updateDoc(doc(own, G), { 'roles.own': deleteField() })));
 
 // --- public groups
@@ -157,6 +177,7 @@ await t('reader lists own suggestions', assertSucceeds(getDocs(query(collection(
 await t('reader cannot list all suggestions', assertFails(getDocs(collection(ali, 'suggestions'))));
 await t('reader cannot resolve', assertFails(updateDoc(doc(ali, 'suggestions/s1'), { status: 'accepted' })));
 await t('admin resolves', assertSucceeds(updateDoc(doc(adm, 'suggestions/s1'), { status: 'accepted', reply: 'شكراً' })));
+await t('reader deletes own suggestion', assertSucceeds(deleteDoc(doc(ali, 'suggestions/s1'))));
 
 // --- announcements, audit log
 await t('admin posts an announcement', assertSucceeds(setDoc(doc(adm, 'announcements/a1'), { title: 'مرحباً', body: 'x', active: true, createdAt: 1 })));
